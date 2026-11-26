@@ -1232,6 +1232,9 @@ class JarvisApp(ctk.CTk):
         # State tracking for Live Talking (real-time voice conversation & TTS)
         self.live_talking_active = False
         self.is_speaking_tts = False
+        self.live_turn_busy = False
+        self.live_is_capturing = False
+        self.live_force_send_event = threading.Event()
         self.live_user_bubble = None
         
         # Autonomous Computer Control Agent (OS Agent)
@@ -1572,6 +1575,19 @@ class JarvisApp(ctk.CTk):
         )
         self.lbl_live_status.grid(row=0, column=1, sticky="w", padx=6, pady=(6, 2))
         
+        self.btn_live_send_now = ctk.CTkButton(
+            self.live_hud_frame,
+            text="📨 Enviar ya",
+            font=("Segoe UI", 10, "bold"),
+            width=88,
+            height=24,
+            fg_color="#00a8ff",
+            hover_color="#00c0ff",
+            text_color="#ffffff",
+            command=self.force_send_live_turn
+        )
+        self.btn_live_send_now.grid(row=0, column=2, padx=(6, 4), pady=(6, 2), sticky="e")
+
         self.btn_live_stop = ctk.CTkButton(
             self.live_hud_frame, 
             text="Detener ✕", 
@@ -1583,7 +1599,7 @@ class JarvisApp(ctk.CTk):
             text_color="#ffffff",
             command=self.stop_live_talking
         )
-        self.btn_live_stop.grid(row=0, column=2, padx=(6, 12), pady=(6, 2), sticky="e")
+        self.btn_live_stop.grid(row=0, column=3, padx=(4, 12), pady=(6, 2), sticky="e")
         
         self.lbl_live_transcript = ctk.CTkLabel(
             self.live_hud_frame, 
@@ -1593,7 +1609,7 @@ class JarvisApp(ctk.CTk):
             anchor="w",
             wraplength=700
         )
-        self.lbl_live_transcript.grid(row=1, column=0, columnspan=3, sticky="ew", padx=12, pady=(0, 6))
+        self.lbl_live_transcript.grid(row=1, column=0, columnspan=4, sticky="ew", padx=12, pady=(0, 6))
 
         # Attachment preview bar (shown only when image is attached)
         self.attach_preview_frame = ctk.CTkFrame(frame, fg_color="#091428", border_width=1, border_color="#00e5ff", height=38)
@@ -1699,6 +1715,9 @@ class JarvisApp(ctk.CTk):
             return
 
         self.live_talking_active = True
+        self.live_turn_busy = False
+        self.live_is_capturing = False
+        self.live_force_send_event.clear()
         self.btn_live_talk.configure(
             text="🔴 En Vivo",
             fg_color="#e84118",
@@ -1707,15 +1726,18 @@ class JarvisApp(ctk.CTk):
             border_color="#ff4757"
         )
         self.live_hud_frame.grid(row=3, column=0, sticky="ew", pady=(2, 6))
-        self.lbl_live_status.configure(text="🎙️ Escuchando en tiempo real... Hable con naturalidad.")
+        self.lbl_live_status.configure(text="🎙️ Calibrando ruido ambiental... Hable con naturalidad.")
         self.lbl_live_transcript.configure(text="")
-        self.show_toast("Live Talking activado. Hable ahora.")
+        self.show_toast("Live Talking activado con supresión de ruido.")
 
         threading.Thread(target=self._live_talking_loop, daemon=True).start()
 
     def stop_live_talking(self):
         """Stops the live voice conversation loop and immediately silences voice playback."""
         self.live_talking_active = False
+        self.live_turn_busy = False
+        self.live_is_capturing = False
+        self.live_force_send_event.clear()
         self.stop_current_speech()
         self.btn_live_talk.configure(
             text="🎙️ Live Talking",
@@ -1726,6 +1748,16 @@ class JarvisApp(ctk.CTk):
         )
         self.live_hud_frame.grid_forget()
         self.show_toast("Live Talking detenido.")
+
+    def force_send_live_turn(self):
+        """Immediately finalizes and sends the current spoken phrase without waiting for silence."""
+        if self.live_talking_active and self.live_is_capturing:
+            self.lbl_live_status.configure(text="📨 Procesando y enviando voz ahora...")
+            self.live_force_send_event.set()
+        elif self.chat_input.get().strip():
+            self.send_user_message()
+        else:
+            self.show_toast("Aún no se ha detectado voz para enviar.")
 
     def stop_current_speech(self):
         """Immediately interrupts and silences active TTS audio playback."""
@@ -1808,7 +1840,9 @@ class JarvisApp(ctk.CTk):
             self.live_user_bubble = None
 
     def _finalize_live_turn(self, final_text):
-        """Finalizes user bubble after 5s of silence, queries the AI, and speaks the response."""
+        """Finalizes user bubble after conversational pause, queries the AI, and speaks the response."""
+        self.live_turn_busy = True
+        self.live_is_capturing = False
         if self.live_user_bubble is not None:
             self.live_user_bubble["lbl_sender"].configure(text="Usuario")
             self.live_user_bubble["lbl_text"].configure(text=final_text)
@@ -1823,25 +1857,28 @@ class JarvisApp(ctk.CTk):
         def ai_turn_worker():
             provider = self.config.get("ai_provider", "DeepSeek")
             try:
-                response = self.jarvis_ai.send_message(final_text) if self.jarvis_ai else "Señor, no hay un modelo de IA configurado."
-            except Exception as e:
-                logger.error(f"Error calling {provider}: {e}")
-                response = f"Lo siento, señor. He experimentado una anomalía en mi núcleo de comunicación ({provider}). Error: {str(e)}"
+                try:
+                    response = self.jarvis_ai.send_message(final_text) if self.jarvis_ai else "Señor, no hay un modelo de IA configurado."
+                except Exception as e:
+                    logger.error(f"Error calling {provider}: {e}")
+                    response = f"Lo siento, señor. He experimentado una anomalía en mi núcleo de comunicación ({provider}). Error: {str(e)}"
 
-            # Show Jarvis text bubble (remains permanent in chat)
-            self.after(0, lambda r=response: self.add_chat_bubble("J.A.R.V.I.S.", r))
+                # Show Jarvis text bubble (remains permanent in chat)
+                self.after(0, lambda r=response: self.add_chat_bubble("J.A.R.V.I.S.", r))
 
-            # Speak Jarvis response aloud with male TTS
-            if self.live_talking_active:
-                self.after(0, lambda: self.lbl_live_status.configure(text="🔊 J.A.R.V.I.S. hablando..."))
-                self.speak_text_sync(response)
-                # Short pause after speaking to prevent microphone loopback
-                time.sleep(0.6)
+                # Speak Jarvis response aloud with male TTS
                 if self.live_talking_active:
-                    self.after(0, lambda: self.lbl_live_status.configure(
-                        text="🎙️ Escuchando... Puedes hablar. Se mostrará en vivo en el chat."
-                    ))
-                    self.after(0, lambda: self.lbl_live_transcript.configure(text=""))
+                    self.after(0, lambda: self.lbl_live_status.configure(text="🔊 J.A.R.V.I.S. hablando..."))
+                    self.speak_text_sync(response)
+                    # Short pause after speaking to prevent speaker-to-mic loopback
+                    time.sleep(0.35)
+                    if self.live_talking_active:
+                        self.after(0, lambda: self.lbl_live_status.configure(
+                            text="🎙️ Escuchando (Filtro de Ruido Activo)... Hable con naturalidad."
+                        ))
+                        self.after(0, lambda: self.lbl_live_transcript.configure(text=""))
+            finally:
+                self.live_turn_busy = False
 
         threading.Thread(target=ai_turn_worker, daemon=True).start()
 
@@ -1898,6 +1935,7 @@ class JarvisApp(ctk.CTk):
             return
 
         # 2. Play audio using Windows MCI (supports instant stop)
+        self.is_speaking_tts = True
         try:
             winmm = ctypes.windll.winmm
             alias = "jarvis_tts"
@@ -1918,6 +1956,7 @@ class JarvisApp(ctk.CTk):
         except Exception as ex_play:
             logger.error(f"Error playing TTS via MCI: {ex_play}")
         finally:
+            self.is_speaking_tts = False
             try:
                 if os.path.exists(tts_mp3):
                     os.remove(tts_mp3)
@@ -1925,10 +1964,18 @@ class JarvisApp(ctk.CTk):
                 pass
 
     def _live_talking_loop(self):
-        """Continuous Live Talking background loop: Listen -> Stream in Chat Bubble -> 5s Silence -> AI -> TTS."""
+        """
+        Upgraded Live Talking loop:
+        - Spectral Formant & Tonality VAD (200-3800 Hz) + Adaptive Minimum-Statistics Noise Floor
+        - Immune to 50/60Hz electrical hum, AC/fan rumble, and laptop microphone broadband hiss
+        - 350ms pre-roll ring buffer so initial syllables are never clipped
+        - STFT Wiener spectral denoising + 16 kHz wideband resampling + multi-locale Spanish STT (es-MX)
+        - Conversational 1.8s silence auto-send + instant manual send support
+        """
         import sounddevice as sd
         import numpy as np
         import io, wave, time, queue
+        from collections import deque
         import speech_recognition as sr
 
         # Detect native microphone hardware sample rate
@@ -1938,17 +1985,58 @@ class JarvisApp(ctk.CTk):
         except Exception:
             fs = 44100
 
+        # Use fixed 50ms blocks (~20 Hz FFT bin resolution) for accurate spectral voice/noise separation
+        block_samples = max(512, int(fs * 0.05))
         audio_q = queue.Queue()
 
         def audio_cb(indata, frames, time_info, status):
             if self.live_talking_active:
                 audio_q.put(indata.copy())
 
-        # Measure baseline ambient noise for 0.3s
+        def analyze_voice_chunk(chunk_int16, noise_floor):
+            """
+            Evaluates whether a 50ms audio chunk contains human speech vs ambient noise.
+            Combines Parseval-normalized 200-3800 Hz RMS, non-hum spectral ratio (>=160 Hz),
+            Wiener spectral flatness, and spectral crest factor.
+            """
+            flat_f = chunk_int16.flatten().astype(np.float32)
+            n_s = len(flat_f)
+            if n_s < 128:
+                return False, 0.0
+            flat_f -= np.mean(flat_f)
+            spec = np.abs(np.fft.rfft(flat_f)) + 1e-6
+            freqs = np.fft.rfftfreq(n_s, 1.0 / fs)
+
+            voice_mask = (freqs >= 200) & (freqs <= 3800)
+            non_hum_mask = (freqs >= 160)
+            if not np.any(voice_mask):
+                return False, 0.0
+
+            v_spec = spec[voice_mask]
+            nh_spec = spec[non_hum_mask]
+
+            # Parseval-normalized time-domain equivalent RMS in int16 scale [0..32767]
+            v_rms = float(np.sqrt(2.0 * np.sum((v_spec / n_s) ** 2)))
+            v_energy = float(np.sum(v_spec ** 2))
+            nh_energy = float(np.sum(nh_spec ** 2)) + 1e-9
+            v_ratio = v_energy / nh_energy
+
+            # Spectral flatness (geom_mean / arith_mean): speech formants are peaky (<0.50), fan hiss is flat (>0.58)
+            flatness = float(np.exp(np.mean(np.log(v_spec))) / (np.mean(v_spec) + 1e-9))
+            crest = float(np.percentile(v_spec, 95) / (np.mean(v_spec) + 1e-9))
+
+            snr = v_rms / max(noise_floor, 12.0)
+            has_tonality = (flatness < 0.50) or (crest > 2.85)
+            is_voice = (v_rms > 18.0) and (v_ratio > 0.24) and (
+                (snr > 1.80 and has_tonality) or (snr > 3.80 and flatness < 0.62)
+            )
+            return is_voice, v_rms
+
+        # Measure baseline ambient noise for 0.4s to seed adaptive noise floor
         ambient_frames = []
         try:
-            with sd.InputStream(samplerate=fs, channels=1, dtype='int16', callback=audio_cb):
-                sd.sleep(300)
+            with sd.InputStream(samplerate=fs, blocksize=block_samples, channels=1, dtype='int16', callback=audio_cb):
+                sd.sleep(400)
                 while not audio_q.empty():
                     ambient_frames.append(audio_q.get())
         except Exception as e:
@@ -1957,69 +2045,211 @@ class JarvisApp(ctk.CTk):
             self.after(0, self.stop_live_talking)
             return
 
-        if ambient_frames:
-            amb_data = np.concatenate(ambient_frames, axis=0)
-            amb_rms = float(np.sqrt(np.mean(amb_data.astype(np.float32)**2)))
-        else:
-            amb_rms = 1.0
+        amb_v_rms_list = []
+        for af in ambient_frames:
+            _, vr = analyze_voice_chunk(af, 15.0)
+            if vr > 0:
+                amb_v_rms_list.append(vr)
 
-        speech_thresh = max(15.0, amb_rms * 2.0)
-        logger.info(f"Live Talking started -> Native SR: {fs} Hz, Ambient RMS: {amb_rms:.2f}, Threshold: {speech_thresh:.2f}")
+        adaptive_noise_floor = max(14.0, float(np.median(amb_v_rms_list)) if amb_v_rms_list else 16.0)
+        logger.info(
+            f"Live Talking started -> SR: {fs} Hz, Block: {block_samples}, "
+            f"Initial Voice-Band Noise Floor: {adaptive_noise_floor:.2f}"
+        )
 
         recognizer = sr.Recognizer()
-        recognizer.energy_threshold = 200
+        recognizer.energy_threshold = 150
         recognizer.dynamic_energy_threshold = False
 
-        speech_frames = []
-        is_speaking = False
-        last_speech_time = None
-        last_interim_time = 0
-        current_live_text = ""
-        interim_in_progress = False
+        def enhance_speech_audio(raw_int16, sample_rate):
+            """
+            1. Removes DC offset, <120Hz electrical hum/fan rumble, and >7500Hz hiss
+            2. Bandlimited FFT resample to 16000 Hz (optimal wideband rate for Google STT, 3x faster upload)
+            3. Vectorized STFT Wiener spectral denoising to attenuate stationary background noise inside speech band
+            4. Dynamic peak normalization to 24000 int16
+            """
+            x = raw_int16.astype(np.float32)
+            if len(x) < 512:
+                return raw_int16, sample_rate
+            try:
+                x -= np.mean(x)
+                target_fs = 16000
+                n_in = len(x)
+                spec = np.fft.rfft(x)
+                freqs = np.fft.rfftfreq(n_in, 1.0 / sample_rate)
+
+                hp = np.clip((freqs - 70.0) / 70.0, 0.0, 1.0) ** 2
+                lp = np.clip((7600.0 - freqs) / 600.0, 0.0, 1.0)
+                spec *= (hp * lp)
+
+                if sample_rate != target_fs:
+                    n_out = max(512, int(round(n_in * target_fs / sample_rate)))
+                    n_bins_out = n_out // 2 + 1
+                    spec_out = np.zeros(n_bins_out, dtype=np.complex64)
+                    copy_bins = min(len(spec), n_bins_out)
+                    spec_out[:copy_bins] = spec[:copy_bins] * (n_out / n_in)
+                    y = np.fft.irfft(spec_out, n=n_out)
+                else:
+                    y = np.fft.irfft(spec, n=n_in)
+                    target_fs = sample_rate
+
+                # STFT Wiener spectral subtraction for stationary room/fan noise
+                win_len = 512  # 32ms @ 16kHz
+                hop = 256      # 16ms hop
+                if len(y) >= win_len * 4:
+                    pad = win_len
+                    y_pad = np.pad(y, (pad, pad), mode='reflect')
+                    n_frames = 1 + (len(y_pad) - win_len) // hop
+                    idx = np.arange(win_len)[None, :] + hop * np.arange(n_frames)[:, None]
+                    frames = y_pad[idx]
+                    win = np.hanning(win_len).astype(np.float32)
+                    stft = np.fft.rfft(frames * win[None, :], axis=1)
+                    mag = np.abs(stft)
+                    noise_est = np.percentile(mag, 15, axis=0, keepdims=True)
+                    snr_post = (mag ** 2) / (noise_est ** 2 * 2.0 + 1e-6)
+                    gain = np.clip(snr_post / (1.0 + snr_post), 0.18, 1.0)
+                    frames_out = np.fft.irfft(stft * gain, n=win_len, axis=1) * win[None, :]
+                    y_out = np.zeros(len(y_pad), dtype=np.float32)
+                    win_sum = np.zeros(len(y_pad), dtype=np.float32)
+                    win_sq = win ** 2
+                    for i in range(n_frames):
+                        s = i * hop
+                        y_out[s:s + win_len] += frames_out[i]
+                        win_sum[s:s + win_len] += win_sq
+                    y = (y_out / np.maximum(win_sum, 1e-6))[pad:pad + len(y)]
+
+                peak = float(np.max(np.abs(y)))
+                if peak > 15.0:
+                    norm_gain = min(24000.0 / peak, 10.0)
+                    y = np.clip(y * norm_gain, -32767.0, 32767.0)
+                return y.astype(np.int16), target_fs
+            except Exception as ef:
+                logger.debug(f"Audio enhancement fallback: {ef}")
+                return raw_int16, sample_rate
 
         def frames_to_audio_record(frames_list):
-            raw = np.concatenate(frames_list, axis=0)
-            max_v = float(np.max(np.abs(raw)))
-            if 0 < max_v < 16000:
-                gain = min(16000.0 / max_v, 8.0)
-                raw = np.clip(raw * gain, -32767, 32767).astype(np.int16)
+            raw = np.concatenate(frames_list, axis=0).flatten()
+            clean_audio, out_sr = enhance_speech_audio(raw, fs)
             bio = io.BytesIO()
             with wave.open(bio, 'wb') as wf:
                 wf.setnchannels(1)
                 wf.setsampwidth(2)
-                wf.setframerate(fs)
-                wf.writeframes(raw.tobytes())
+                wf.setframerate(out_sr)
+                wf.writeframes(clean_audio.tobytes())
             bio.seek(0)
             with sr.AudioFile(bio) as src:
                 return recognizer.record(src)
 
+        def recognize_stt(rec_audio, primary_only=False):
+            """
+            Multi-locale Spanish Speech-to-Text with confidence ranking.
+            Prioritizes Latin American / Mexican Spanish (es-MX), with fallback to es-US and es-ES.
+            """
+            locales = ["es-MX"] if primary_only else ["es-MX", "es-US", "es-ES"]
+            for lang in locales:
+                try:
+                    res = recognizer.recognize_google(rec_audio, language=lang, show_all=True)
+                    if isinstance(res, dict) and res.get("alternative"):
+                        alts = res["alternative"]
+                        best = max(alts, key=lambda a: float(a.get("confidence", 0.0)))
+                        txt = str(best.get("transcript", "")).strip()
+                        if not txt and alts:
+                            txt = str(alts[0].get("transcript", "")).strip()
+                        if txt:
+                            return txt[0].upper() + txt[1:] if len(txt) > 1 else txt.upper()
+                    elif isinstance(res, str) and res.strip():
+                        txt = res.strip()
+                        return txt[0].upper() + txt[1:] if len(txt) > 1 else txt.upper()
+                except sr.UnknownValueError:
+                    pass
+                except sr.RequestError as req_err:
+                    logger.warning(f"Google STT network warning ({lang}): {req_err}")
+                    break
+                except Exception as ex:
+                    logger.debug(f"STT attempt error ({lang}): {ex}")
+            return ""
+
+        pre_roll = deque(maxlen=7)         # ~350ms pre-speech ring buffer so first syllable is never cut
+        rms_window = deque(maxlen=80)      # ~4.0s rolling window for minimum-statistics noise tracking
+        speech_frames = []
+        speech_sample_count = 0
+        is_speaking = False
+        speech_start_time = None
+        last_speech_time = None
+        last_interim_time = 0.0
+        current_live_text = ""
+        interim_in_progress = False
+        voice_streak = 0
+        silence_timeout = 1.8              # Natural 1.8s conversational pause
+        max_utterance_seconds = 28.0       # Safety guard against endless open turns
+
         try:
-            with sd.InputStream(samplerate=fs, channels=1, dtype='int16', callback=audio_cb):
+            with sd.InputStream(samplerate=fs, blocksize=block_samples, channels=1, dtype='int16', callback=audio_cb):
                 self.after(0, lambda: self.lbl_live_status.configure(
-                    text="🎙️ Escuchando... Puedes hablar. Tus palabras aparecerán en el chat."
+                    text="🎙️ Escuchando (Filtro de Ruido Activo)... Hable con naturalidad."
                 ))
 
                 while self.live_talking_active:
-                    try:
-                        block = audio_q.get(timeout=0.1)
-                    except queue.Empty:
+                    # Pause mic capture while Jarvis is speaking/responding to prevent speaker echo loopback
+                    if self.live_turn_busy or self.is_speaking_tts:
+                        while not audio_q.empty():
+                            try:
+                                audio_q.get_nowait()
+                            except queue.Empty:
+                                break
+                        is_speaking = False
+                        self.live_is_capturing = False
+                        voice_streak = 0
+                        speech_frames.clear()
+                        speech_sample_count = 0
+                        pre_roll.clear()
+                        self.live_force_send_event.clear()
+                        time.sleep(0.04)
                         continue
 
-                    rms = float(np.sqrt(np.mean(block.astype(np.float32)**2)))
+                    try:
+                        block = audio_q.get(timeout=0.08)
+                    except queue.Empty:
+                        if is_speaking and self.live_force_send_event.is_set():
+                            block = np.zeros((block_samples, 1), dtype=np.int16)
+                        else:
+                            continue
+
                     now = time.time()
+                    is_voice_chunk, v_rms = analyze_voice_chunk(block, adaptive_noise_floor)
+                    if v_rms > 0:
+                        rms_window.append(v_rms)
 
-                    # Sound/Voice activity detected
-                    if rms > speech_thresh:
-                        last_speech_time = now
+                    force_send_now = self.live_force_send_event.is_set()
+
+                    if is_voice_chunk and not force_send_now:
+                        voice_streak += 1
                         if not is_speaking:
-                            is_speaking = True
-                            self.after(0, self._ensure_live_user_bubble)
-                            self.after(0, lambda: self.lbl_live_status.configure(text="🎙️ Detectando voz..."))
+                            if voice_streak >= 2:
+                                is_speaking = True
+                                self.live_is_capturing = True
+                                speech_start_time = now
+                                last_speech_time = now
+                                # Prepend 350ms pre-roll so beginning of first word is intact
+                                speech_frames = list(pre_roll) + [block]
+                                speech_sample_count = sum(len(b) for b in speech_frames)
+                                pre_roll.clear()
+                                self.after(0, self._ensure_live_user_bubble)
+                                self.after(0, lambda: self.lbl_live_status.configure(text="🎙️ Detectando voz..."))
+                            else:
+                                pre_roll.append(block)
+                        else:
+                            last_speech_time = now
+                            speech_frames.append(block)
+                            speech_sample_count += len(block)
 
-                        speech_frames.append(block)
-
-                        # Interim recognition every ~1.2s while speaking to stream words in real time
-                        if len(speech_frames) >= fs * 0.8 and (now - last_interim_time > 1.2) and not interim_in_progress:
+                        # Real-time interim streaming every ~0.9s once >= 0.55s of speech is buffered
+                        if (
+                            is_speaking
+                            and speech_sample_count >= int(fs * 0.55)
+                            and (now - last_interim_time > 0.9)
+                            and not interim_in_progress
+                        ):
                             last_interim_time = now
                             interim_in_progress = True
                             snapshot_frames = list(speech_frames)
@@ -2028,8 +2258,8 @@ class JarvisApp(ctk.CTk):
                                 nonlocal current_live_text, interim_in_progress
                                 try:
                                     rec = frames_to_audio_record(snap)
-                                    txt = recognizer.recognize_google(rec, language="es-ES").strip()
-                                    if txt and self.live_talking_active:
+                                    txt = recognize_stt(rec, primary_only=True)
+                                    if txt and self.live_talking_active and not self.live_turn_busy:
                                         current_live_text = txt
                                         self.after(0, lambda t=txt: self._update_live_user_bubble(t))
                                 except Exception:
@@ -2039,45 +2269,74 @@ class JarvisApp(ctk.CTk):
 
                             threading.Thread(target=do_interim, args=(snapshot_frames,), daemon=True).start()
 
-                    elif is_speaking:
-                        # User was speaking, now a pause
-                        speech_frames.append(block)
-                        silence_duration = now - last_speech_time
+                    else:
+                        voice_streak = 0
+                        # Continuously adapt noise floor on non-voice chunks
+                        if v_rms > 0 and not force_send_now:
+                            adaptive_noise_floor = 0.92 * adaptive_noise_floor + 0.08 * v_rms
+                            if len(rms_window) >= 30:
+                                min_stat = float(np.percentile(rms_window, 20))
+                                adaptive_noise_floor = max(adaptive_noise_floor, min_stat * 0.95)
+                            adaptive_noise_floor = min(max(adaptive_noise_floor, 10.0), 600.0)
 
-                        # Countdown on the HUD
-                        secs_left = max(0, int(5.0 - silence_duration) + 1)
-                        if secs_left <= 5:
-                            self.after(0, lambda s=secs_left: self.lbl_live_status.configure(
-                                text=f"⏳ Silencio detectado... enviando en {s}s"
-                            ))
+                        if is_speaking:
+                            speech_frames.append(block)
+                            speech_sample_count += len(block)
+                            silence_duration = now - last_speech_time
+                            utterance_age = now - (speech_start_time or now)
 
-                        # 5 seconds of silence reached -> turn completed!
-                        if silence_duration >= 5.0:
-                            is_speaking = False
-                            last_speech_time = None
-                            final_turn_frames = list(speech_frames)
-                            speech_frames.clear()
-
-                            final_text = current_live_text
-                            try:
-                                rec_final = frames_to_audio_record(final_turn_frames)
-                                parsed = recognizer.recognize_google(rec_final, language="es-ES").strip()
-                                if parsed:
-                                    final_text = parsed
-                            except Exception as ex:
-                                logger.info(f"Final pass fallback to interim: {ex}")
-
-                            if final_text:
-                                self.after(0, lambda t=final_text: self._finalize_live_turn(t))
-                            else:
-                                self.after(0, self._cancel_live_user_bubble)
-                                self.after(0, lambda: self.lbl_live_status.configure(
-                                    text="🎙️ Escuchando... Puedes hablar. Se mostrará en vivo en el chat."
+                            # Responsive decimal countdown on the HUD
+                            secs_left = max(0.0, silence_timeout - silence_duration)
+                            if secs_left > 0 and not force_send_now:
+                                self.after(0, lambda s=secs_left: self.lbl_live_status.configure(
+                                    text=f"⏳ Pausa detectada... enviando en {s:.1f}s (o pulse 'Enviar ya')"
                                 ))
 
-                            current_live_text = ""
-                    else:
-                        time.sleep(0.01)
+                            # Auto-send after 1.8s pause, manual 'Enviar ya', or max utterance cap
+                            if force_send_now or silence_duration >= silence_timeout or utterance_age >= max_utterance_seconds:
+                                self.live_force_send_event.clear()
+                                is_speaking = False
+                                self.live_is_capturing = False
+                                last_speech_time = None
+                                speech_start_time = None
+                                final_turn_frames = list(speech_frames)
+                                speech_frames.clear()
+                                speech_sample_count = 0
+
+                                # Trim trailing silent blocks (keep ~0.35s tail) for faster, cleaner STT
+                                if not force_send_now and silence_duration >= silence_timeout:
+                                    trim_blocks = max(0, int((silence_timeout - 0.35) / 0.05))
+                                    if len(final_turn_frames) > trim_blocks + 6:
+                                        final_turn_frames = final_turn_frames[:-trim_blocks]
+
+                                self.after(0, lambda: self.lbl_live_status.configure(
+                                    text="🧠 Transcribiendo voz con filtro espectral..."
+                                ))
+
+                                final_text = current_live_text
+                                try:
+                                    rec_final = frames_to_audio_record(final_turn_frames)
+                                    parsed = recognize_stt(rec_final, primary_only=False)
+                                    if parsed:
+                                        final_text = parsed
+                                except Exception as ex:
+                                    logger.info(f"Final pass fallback to interim: {ex}")
+
+                                current_live_text = ""
+                                if final_text:
+                                    self.after(0, lambda t=final_text: self._finalize_live_turn(t))
+                                else:
+                                    self.after(0, self._cancel_live_user_bubble)
+                                    self.after(0, lambda: self.lbl_live_status.configure(
+                                        text="🎙️ Escuchando (Filtro de Ruido Activo)... Hable con naturalidad."
+                                    ))
+                        else:
+                            self.live_force_send_event.clear()
+                            pre_roll.append(block)
+
+                    # Also check max utterance cap even during sustained audio
+                    if is_speaking and speech_start_time and (now - speech_start_time >= max_utterance_seconds):
+                        self.live_force_send_event.set()
 
         except Exception as e:
             logger.error(f"Live Talking loop exception: {e}")
@@ -2214,6 +2473,11 @@ class JarvisApp(ctk.CTk):
         self.send_user_message()
 
     def send_user_message(self):
+        # If user presses Enter or clicks ENVIAR while speaking in Live Talking, flush the full spoken audio turn
+        if self.live_talking_active and self.live_is_capturing and not self.attached_image_path:
+            self.force_send_live_turn()
+            return
+
         message = self.chat_input.get().strip()
         image_to_send = self.attached_image_path
         
@@ -2225,6 +2489,9 @@ class JarvisApp(ctk.CTk):
         
         if image_to_send:
             self.last_image_path = image_to_send
+
+        if self.live_user_bubble is not None:
+            self._cancel_live_user_bubble()
             
         self.add_chat_bubble("Usuario", message, image_path=image_to_send)
         

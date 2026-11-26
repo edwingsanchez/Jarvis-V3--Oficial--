@@ -17,12 +17,14 @@ J.A.R.V.I.S. V3 (Just A Rather Very Intelligent System) es un asistente personal
 *   **Generación de Imágenes mediante IA**:
     *   Herramienta integrada `generate_ai_image`: pídale a Jarvis generar conceptos o ilustraciones en texto (ej. *"Jarvis, genera una imagen de un reactor arc futurista"*).
     *   Generación instantánea en alta resolución, guardado automático en `images/` y visualización directa en el chat.
-*   **🎙️ Live Talking (Conversación por Voz en Tiempo Real & TTS)**:
+*   **🎙️ Live Talking (Conversación por Voz en Tiempo Real, Supresión de Ruido & TTS)**:
     *   Botón interactivo **🎙️ Live Talking** en la consola de comandos.
-    *   **Burbuja de Usuario en Tiempo Real**: Todo lo que vas diciendo se transmite y visualiza directamente dentro de tu propia burbuja de chat (`Usuario 🎙️`) mientras hablas.
-    *   **Envío Automático tras 5 Segundos de Silencio**: Al dejar de hablar durante 5 segundos, la consulta se sella y se envía automáticamente a J.A.R.V.I.S.
-    *   **Voz Masculina Neuronal (TTS)**: J.A.R.V.I.S. responde por escrito en el chat y **habla en voz alta con una voz masculina** (`es-MX-JorgeNeural` de Microsoft Edge TTS con fallback local).
-    *   **Interrupción Inmediata de Voz**: Si pulsas `Detener ✕` mientras J.A.R.V.I.S. está hablando, la voz se silencia al instante (en menos de 10 ms), mientras que toda la respuesta en texto permanece intacta y guardada en el chat.
+    *   **VAD Espectral con Piso de Ruido Adaptativo**: Detección de actividad de voz basada en formantes humanos (`200–3800 Hz`), planitud espectral (Wiener entropy) y seguimiento continuo de piso de ruido ambiental, inmune a ventiladores, aire acondicionado, zumbidos eléctricos (`50/60 Hz`) y siseo de micrófonos de laptop.
+    *   **Speech-to-Text Mejorado con Denoising Espectral**: Filtrado STFT Wiener, remuestreo limpio a `16 kHz`, pre-roll de `350 ms` para no cortar sílabas iniciales y reconocimiento multirregional priorizando español latinoamericano (`es-MX` -> `es-US` -> `es-ES`) por nivel de confianza.
+    *   **Burbuja de Usuario en Tiempo Real**: Todo lo que vas diciendo se transmite y visualiza directamente dentro de tu propia burbuja de chat (`Usuario 🎙️`) cada `~0.9s` mientras hablas.
+    *   **Envío Automático Rápido (`1.8s`) + Botón `📨 Enviar ya`**: Al hacer una pausa natural de `1.8 segundos`, la consulta se sella y envía automáticamente incluso si hay ruido alrededor; además incluye el botón **`📨 Enviar ya`** (o `Enter`) para forzar el envío instantáneo sin esperar.
+    *   **Voz Masculina Neuronal (TTS) sin Eco**: J.A.R.V.I.S. responde en texto y **habla con voz masculina** (`es-MX-JorgeNeural`), aislando automáticamente el micrófono durante la locución para evitar bucles de retroalimentación.
+    *   **Interrupción Inmediata de Voz**: Si pulsas `Detener ✕` mientras J.A.R.V.I.S. está hablando, la voz se silencia al instante, mientras que toda la respuesta en texto permanece intacta y guardada en el chat.
     *   **Bucle Conversacional Continuo**: Si no se detiene, el sistema vuelve a escuchar automáticamente tras responder para continuar la conversación manos libres.
 *   **Generación 3D con Tripo3D y Apertura en Editor 3D**:
     *   Herramienta integrada `generate_3d_model`: pídale a Jarvis convertir una imagen adjunta o generada a un modelo 3D con Tripo3D API (ej. *"Genera un modelo 3D de esta imagen"*).
