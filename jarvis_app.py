@@ -1275,7 +1275,15 @@ class JarvisApp(ctk.CTk):
                 aname = a.get("name", "")
                 atype = a.get("type", "Programa externo")
                 apps_lines.append(f"- {aname} ({atype})")
-            apps_context = "\n\nAplicaciones y scripts registrados actualmente en tu central:\n" + "\n".join(apps_lines) + "\nPuedes abrir aplicaciones o ejecutar scripts con la herramienta open_external_app pasando su nombre exacto."
+            apps_context = (
+                "\n\nAplicaciones y scripts autorizados actualmente en tu Central de Aplicaciones:\n"
+                + "\n".join(apps_lines)
+                + "\n\nPOLÍTICA ESTRICTA DE SEGURIDAD (PROTOCOLO STARK):\n"
+                "ÚNICAMENTE tienes permitido abrir, ejecutar o interactuar con las aplicaciones o scripts que se encuentran en esta lista autorizada anterior. "
+                "Si el usuario te solicita abrir o usar un programa externo que NO está en esta lista (por ejemplo, 'bloc de notas', 'notepad', 'calculadora', o cualquier otro no listado), "
+                "NO es que no puedas abrirlo o que no lo encuentres: ES QUE NO ESTÁ PERMITIDO por protocolos de seguridad de Stark Industries. "
+                "En tales casos, DEBES responder de forma clara y directa indicando que no tienes permitido abrirlo por políticas de seguridad, ya que no se encuentra registrado en la Central de Aplicaciones."
+            )
             effective_sys_prompt = (sys_prompt or "") + apps_context
         else:
             effective_sys_prompt = sys_prompt or ""
@@ -1283,7 +1291,8 @@ class JarvisApp(ctk.CTk):
         computer_use_instruction = (
             "\n\nCONTROL AUTÓNOMO DEL SISTEMA OPERATIVO:\n"
             "Tienes la capacidad de controlar activamente la computadora (mouse, teclado y pantalla mediante visión por IA) usando la herramienta 'control_computer'. "
-            "Cuando el usuario te pida abrir un programa y usarlo (ej. 'abre Chrome y abre una página y explora esa página', 'entra a wikipedia y busca X', 'abre el bloc de notas y escribe', 'controla la pantalla', 'haz clics', etc.), DEBES invocar la herramienta 'control_computer'. "
+            "Solo puedes usar esta herramienta para interactuar con el escritorio o con aplicaciones previamente autorizadas en tu lista. Está terminantemente prohibido abrir programas no autorizados. "
+            "Cuando el usuario te pida abrir un programa autorizado y usarlo (ej. 'abre Chrome y abre una página y explora esa página', 'entra a wikipedia y busca X', 'controla la pantalla', 'haz clics', etc.), DEBES invocar la herramienta 'control_computer'. "
             "Al invocarla, responde de forma inmediata confirmando que estás trabajando en ello ('Enseguida, jefe. Iniciando control de la computadora...')."
         )
         effective_sys_prompt += computer_use_instruction
@@ -2283,10 +2292,25 @@ class JarvisApp(ctk.CTk):
         return res[0]
 
     def trigger_computer_control(self, task_description, target_app=""):
-        """Initiates autonomous computer use by the ComputerAgent."""
+        """Initiates autonomous computer use by the ComputerAgent, enforcing app authorization."""
         if hasattr(self, 'computer_agent') and self.computer_agent and self.computer_agent.is_running:
             self.console_log("Advertencia: Ya existe una tarea de control en ejecución.")
             return "Ya hay una tarea de control en progreso, señor."
+
+        # Security Check: If a target app is specified, it MUST be authorized in apps
+        if target_app:
+            allowed, app_obj = self.is_app_allowed(target_app)
+            if not allowed:
+                denial_msg = (
+                    f"Acceso denegado: Por protocolos de seguridad de Stark Industries, no tengo permitido abrir ni controlar '{target_app}'. "
+                    "El programa no se encuentra registrado en la Central de Aplicaciones autorizadas. "
+                    "Para poder utilizarlo, debe registrarlo primero en la pestaña de Apps."
+                )
+                self.console_log(f"🛑 [SEGURIDAD]: {denial_msg}")
+                self.after(0, lambda: self.add_chat_bubble("J.A.R.V.I.S.", denial_msg))
+                if self.live_talking_active:
+                    threading.Thread(target=lambda: self.speak_text_sync(denial_msg), daemon=True).start()
+                return denial_msg
 
         self.console_log(f"Iniciando control autónomo de computadora: '{task_description}'")
 
@@ -2305,9 +2329,9 @@ class JarvisApp(ctk.CTk):
             )
         self.after(0, set_working_ui)
 
-        # 2. If target app is specified, try opening/focusing it first
+        # 2. If target app is specified and authorized, try opening/focusing it first
         if target_app:
-            self.console_log(f"Iniciando o enfocando aplicación objetivo: '{target_app}'...")
+            self.console_log(f"Iniciando o enfocando aplicación autorizada: '{target_app}'...")
             try:
                 self.open_app_by_name(target_app)
                 time.sleep(1.5)
@@ -2839,29 +2863,49 @@ class JarvisApp(ctk.CTk):
         """Displays dialog to register a new application."""
         self.after(0, lambda: AddAppWindow(self))
 
-    def open_app_by_name(self, app_name):
-        """Launches the external application, script, or system program."""
-        name_lower = app_name.lower().strip()
-        
+    def is_app_allowed(self, app_name):
+        """Checks if an application is authorized in the Central de Aplicaciones."""
+        if not app_name:
+            return False, None
+            
+        name_clean = app_name.lower().strip()
+        # Native apps by id or alias
+        if name_clean in ("domotica", "image-to-model", "image to model", "satelites", "satelite", "satélites"):
+            return True, {"name": name_clean, "id": name_clean, "type": "App nativo"}
+            
         apps = self.config.get("apps", [])
-        target_app = None
         # 1. Exact match by name or id
         for app in apps:
-            if app.get("name", "").lower() == name_lower or app.get("id", "").lower() == name_lower:
-                target_app = app
-                break
+            aname = app.get("name", "").lower().strip()
+            aid = app.get("id", "").lower().strip() if app.get("id") else ""
+            if name_clean == aname or (aid and name_clean == aid):
+                return True, app
                 
-        # 2. Match without file extensions or partial match
-        if not target_app:
-            req_no_ext = os.path.splitext(name_lower)[0]
-            for app in apps:
-                aname = app.get("name", "").lower()
-                aname_no_ext = os.path.splitext(aname)[0]
-                if req_no_ext and (req_no_ext == aname_no_ext or req_no_ext in aname or aname in req_no_ext):
-                    target_app = app
-                    break
+        # 2. Match without extension (e.g. "chrome.exe" -> "chrome")
+        req_no_ext = os.path.splitext(name_clean)[0]
+        for app in apps:
+            aname = app.get("name", "").lower().strip()
+            aname_no_ext = os.path.splitext(aname)[0]
+            if req_no_ext and (req_no_ext == aname_no_ext or req_no_ext in aname or aname in req_no_ext):
+                return True, app
+                
+        return False, None
 
-        if target_app and target_app.get("id"):
+    def open_app_by_name(self, app_name):
+        """Launches the external application, script, or system program ONLY if authorized in apps."""
+        name_lower = app_name.lower().strip()
+        
+        allowed, target_app = self.is_app_allowed(app_name)
+        if not allowed or not target_app:
+            denial_msg = (
+                f"Acceso denegado: Por protocolos de seguridad de Stark Industries, no tengo permitido abrir o ejecutar '{app_name}'. "
+                "El programa no se encuentra registrado en la Central de Aplicaciones autorizadas. "
+                "Para poder utilizarlo, debe registrarlo primero en la pestaña de Apps."
+            )
+            self.console_log(f"🛑 [SEGURIDAD]: {denial_msg}")
+            return denial_msg
+
+        if target_app.get("id"):
             app_id = target_app["id"].lower().strip()
             if app_id == "image-to-model":
                 self.console_log("Abriendo aplicación nativa Image-to-model...")
@@ -2876,7 +2920,7 @@ class JarvisApp(ctk.CTk):
                 self.after(0, lambda: SatellitesWindow(self))
                 return "Éxito: Se ha inicializado el radar de satélites."
                 
-        # Fallback matches
+        # Fallback native matches
         if name_lower in ("image-to-model", "image to model"):
             self.console_log("Abriendo aplicación nativa Image-to-model...")
             self.after(0, lambda: ImageToModelWindow(self))
@@ -2889,21 +2933,6 @@ class JarvisApp(ctk.CTk):
             self.console_log("Abriendo radar de satélites...")
             self.after(0, lambda: SatellitesWindow(self))
             return "Éxito: Se ha inicializado el radar de satélites."
-                
-        if not target_app:
-            # Check if app_name itself is an existing file or script on disk
-            if os.path.exists(app_name):
-                p_lower = app_name.lower()
-                is_sc = p_lower.endswith(('.py', '.pyw', '.bat', '.cmd', '.ps1', '.sh'))
-                target_app = {
-                    "name": os.path.basename(app_name),
-                    "path": app_name,
-                    "type": "Script" if is_sc else "Programa externo"
-                }
-            else:
-                error_msg = f"La aplicación o script '{app_name}' no se encuentra registrada en la central de aplicaciones."
-                self.console_log(error_msg)
-                return f"Error: {error_msg}"
             
         path = target_app.get("path", "").strip()
         app_type = target_app.get("type", "Programa externo")
@@ -2914,11 +2943,11 @@ class JarvisApp(ctk.CTk):
             # --- SCRIPT EXECUTION ---
             if app_type == "Script" or (path and path.lower().endswith(('.py', '.pyw', '.bat', '.cmd', '.ps1', '.sh'))):
                 if not path:
-                    error_msg = f"El script '{app_display_name}' no tiene una ruta física o comando asignado."
+                    error_msg = f"La aplicación '{app_display_name}' está autorizada pero no tiene una ruta configurada."
                     self.console_log(error_msg)
                     return f"Error: {error_msg}"
                 
-                self.console_log(f"Ejecutando script: {app_display_name} ({path})...")
+                self.console_log(f"Ejecutando script autorizado: {app_display_name} ({path})...")
                 if os.path.exists(path):
                     abs_path = os.path.abspath(path)
                     script_dir = os.path.dirname(abs_path)
@@ -2930,12 +2959,12 @@ class JarvisApp(ctk.CTk):
                             cwd=script_dir, 
                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
                         )
-                        return f"Éxito: Se ha ejecutado el script de Python '{app_display_name}' ({abs_path})."
+                        return f"Éxito: Se ha ejecutado el script de Python autorizado '{app_display_name}' ({abs_path})."
                     elif ext in ('.pyw',):
                         pyw = sys.executable.replace("python.exe", "pythonw.exe")
                         py_exec = pyw if os.path.exists(pyw) else sys.executable
                         subprocess.Popen([py_exec, abs_path], cwd=script_dir)
-                        return f"Éxito: Se ha ejecutado el script de Python (sin consola) '{app_display_name}' ({abs_path})."
+                        return f"Éxito: Se ha ejecutado el script de Python autorizado '{app_display_name}' ({abs_path})."
                     elif ext in ('.bat', '.cmd'):
                         subprocess.Popen(
                             [abs_path], 
@@ -2943,47 +2972,41 @@ class JarvisApp(ctk.CTk):
                             shell=True, 
                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
                         )
-                        return f"Éxito: Se ha ejecutado el archivo por lotes '{app_display_name}' ({abs_path})."
+                        return f"Éxito: Se ha ejecutado el archivo por lotes autorizado '{app_display_name}' ({abs_path})."
                     elif ext == '.ps1':
                         subprocess.Popen(
                             ["powershell", "-ExecutionPolicy", "Bypass", "-File", abs_path], 
                             cwd=script_dir, 
                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
                         )
-                        return f"Éxito: Se ha ejecutado el script de PowerShell '{app_display_name}' ({abs_path})."
+                        return f"Éxito: Se ha ejecutado el script de PowerShell autorizado '{app_display_name}' ({abs_path})."
                     else:
                         if os.name == 'nt':
                             os.startfile(abs_path)
                         else:
                             subprocess.Popen([abs_path], cwd=script_dir)
-                        return f"Éxito: Se ha ejecutado el script '{app_display_name}' ({abs_path})."
+                        return f"Éxito: Se ha ejecutado el script autorizado '{app_display_name}' ({abs_path})."
                 else:
-                    # Execute as command line (e.g. python myscript.py or bash command)
-                    subprocess.Popen(
-                        path, 
-                        shell=True, 
-                        creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
-                    )
-                    return f"Éxito: Se ha ejecutado el script/comando '{app_display_name}' ({path})."
+                    return f"Error: No se encontró el archivo del script autorizado '{app_display_name}' en la ruta '{path}'."
 
             # --- EXTERNAL PROGRAM EXECUTION ---
             if path and os.path.exists(path):
-                self.console_log(f"Abriendo aplicación externa: {app_display_name} ({path})...")
+                self.console_log(f"Abriendo aplicación externa autorizada: {app_display_name} ({path})...")
                 subprocess.Popen([path], creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
-                return f"Éxito: Se ha lanzado '{app_display_name}' desde su ruta física."
+                return f"Éxito: Se ha lanzado '{app_display_name}' desde su ruta física autorizada."
             else:
-                self.console_log(f"Ruta física no encontrada para '{app_display_name}'. Intentando ejecución directa en shell...")
-                resolved_cmd = shutil.which(name_lower)
-                if not resolved_cmd and name_lower == "chrome":
-                    resolved_cmd = shutil.which("chrome") or shutil.which("google-chrome")
-                if not resolved_cmd and name_lower == "blender":
-                    resolved_cmd = shutil.which("blender")
-                    
-                exec_cmd = resolved_cmd if resolved_cmd else (path if path else name_lower)
-                subprocess.Popen(exec_cmd, shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
-                return f"Éxito: Se lanzó '{app_display_name}' a través de alias del sistema."
+                # If path is empty or an alias for this explicitly whitelisted app
+                resolved_cmd = shutil.which(path) if path else (shutil.which(app_display_name.lower()) or shutil.which(name_lower))
+                if resolved_cmd:
+                    self.console_log(f"Abriendo aplicación externa autorizada vía alias: {app_display_name} ({resolved_cmd})...")
+                    subprocess.Popen([resolved_cmd], creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
+                    return f"Éxito: Se lanzó la aplicación autorizada '{app_display_name}' a través de alias del sistema."
+                else:
+                    error_msg = f"La aplicación '{app_display_name}' está autorizada en la lista pero no se encontró un ejecutable configurado válido."
+                    self.console_log(error_msg)
+                    return f"Error: {error_msg}"
         except Exception as e:
-            error_msg = f"Excepción al ejecutar '{app_display_name}': {str(e)}"
+            error_msg = f"Excepción al ejecutar la aplicación autorizada '{app_display_name}': {str(e)}"
             self.console_log(error_msg)
             return f"Error: {error_msg}"
 

@@ -41,6 +41,9 @@ J.A.R.V.I.S. V3 (Just A Rather Very Intelligent System) es un asistente personal
 
 ### 2. 🚀 Central de Aplicaciones Stark
 *   Un listado unificado para abrir ejecutables físicos de tu sistema operativo (ej. Chrome, Blender, etc.), conexiones a APIs, aplicaciones nativas integradas y ejecución de scripts.
+*   **🔒 Política Estricta de Seguridad (Lista Blanca Exclusiva)**:
+    *   J.A.R.V.I.S. tiene estrictamente **prohibido** abrir, ejecutar o interactuar con programas externos o scripts que no se encuentren registrados en la Central de Aplicaciones.
+    *   Si el usuario solicita abrir un programa no registrado (por ejemplo, el *Bloc de notas*, *Calculadora* o cualquier ejecutable arbitrario), J.A.R.V.I.S. deniega el acceso de inmediato señalando que **no está permitido por protocolos de seguridad de Stark Industries**, impidiendo cualquier intento de ejecución oculta en el sistema.
 *   **Etiquetado por Tipo de Aplicación**:
     *   ⚡ **API**: Aplicaciones basadas en servicios en la nube (ej. Tripo3D, Home Assistant).
     *   🛡️ **App nativo**: Herramientas integradas en el ecosistema Stark (ej. Radar de Satélites).

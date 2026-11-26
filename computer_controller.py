@@ -121,6 +121,9 @@ class ComputerAgent:
         """Sends the current screenshot, goal, and history to DeepSeek or Gemini to decide the next action."""
         provider = self.config.get("ai_provider", "DeepSeek")
         
+        apps_allowed = [a.get("name") for a in self.config.get("apps", []) if a.get("name")]
+        apps_allowed_str = ", ".join(f"'{name}'" for name in apps_allowed) if apps_allowed else "Ninguna aplicación externa"
+
         history_formatted = ""
         if action_history:
             for idx, h in enumerate(action_history, 1):
@@ -134,6 +137,11 @@ class ComputerAgent:
 
         system_instructions = f"""Eres el agente de control del sistema de J.A.R.V.I.S., encargado de interactuar de forma autónoma con la computadora del usuario usando visión, mouse y teclado.
 La resolución física de la pantalla del usuario es {screen_w}x{screen_h}.
+
+POLÍTICA DE SEGURIDAD ESTRICTA (PROTOCOLO STARK):
+Solo tienes permitido interactuar o abrir las aplicaciones autorizadas por el usuario en la Central de Aplicaciones: [{apps_allowed_str}].
+Tienes TERMINANTEMENTE PROHIBIDO intentar abrir, buscar o ejecutar programas externos no autorizados (por ejemplo, Bloc de notas, Notepad, Calculadora, terminales no registradas, etc.).
+Si el objetivo del usuario solicita abrir o interactuar con un programa que NO está en esta lista de aplicaciones autorizadas, debes finalizar la tarea de inmediato con la acción "done" y un resumen explicando claramente: "Acceso denegado: Por protocolos de seguridad de Stark Industries, no tengo permitido abrir ese programa porque no está registrado en la Central de Aplicaciones autorizadas."
 
 OBJETIVO GENERAL DEL USUARIO:
 "{task_description}"

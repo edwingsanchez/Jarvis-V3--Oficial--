@@ -31,7 +31,7 @@ class JarvisDeepSeekAI:
                 "type": "function",
                 "function": {
                     "name": "control_computer",
-                    "description": "Permite a J.A.R.V.I.S. tomar el control autónomo de la computadora (mouse, teclado y visión de pantalla) para interactuar activamente con programas, abrir páginas web, buscar información, hacer clics, escribir texto y navegar por el sistema operativo siguiendo las órdenes del usuario.",
+                    "description": "Permite a J.A.R.V.I.S. tomar el control autónomo de la computadora (mouse, teclado y visión de pantalla) para interactuar activamente con programas autorizados en la Central de Aplicaciones, abrir páginas web, hacer búsquedas o tareas visuales. Está prohibido interactuar con programas no registrados.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -41,7 +41,7 @@ class JarvisDeepSeekAI:
                             },
                             "target_app": {
                                 "type": "string",
-                                "description": "Nombre opcional del programa o aplicación principal con el que se va a interactuar (ej. 'Chrome', 'Blender', 'Bloc de notas')."
+                                "description": "Nombre opcional del programa o aplicación autorizada con el que se va a interactuar (ej. 'Chrome', 'Blender')."
                             }
                         },
                         "required": ["task_description"]
@@ -52,13 +52,13 @@ class JarvisDeepSeekAI:
                 "type": "function",
                 "function": {
                     "name": "open_external_app",
-                    "description": "Abre una aplicación, programa o ejecuta un script registrado localmente (ej. scripts de Python, archivos batch, 'Chrome', 'Blender', 'Domotica', 'Satelites', 'Image-to-model', etc.) por su nombre.",
+                    "description": "Abre una aplicación, programa o ejecuta un script local ÚNICAMENTE si se encuentra registrado y autorizado en la Central de Aplicaciones ('apps'). Si el programa no está en la lista de apps, no está permitido abrirlo bajo ningún concepto y la solicitud será denegada por seguridad.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "app_name": {
                                 "type": "string",
-                                "description": "El nombre de la aplicación, programa o script a abrir o ejecutar."
+                                "description": "El nombre de la aplicación o script autorizado a abrir o ejecutar."
                             }
                         },
                         "required": ["app_name"]

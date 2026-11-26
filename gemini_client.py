@@ -29,11 +29,11 @@ class JarvisAI:
         
         # Define tool functions inside the class to capture self context
         def control_computer(task_description: str, target_app: str = "") -> str:
-            """Permite a J.A.R.V.I.S. tomar el control autónomo de la computadora (mouse, teclado y visión de pantalla) para interactuar con programas, abrir páginas web, buscar información, hacer clics, escribir texto y navegar por el sistema operativo siguiendo las órdenes del usuario.
+            """Permite a J.A.R.V.I.S. tomar el control autónomo de la computadora (mouse, teclado y visión de pantalla) para interactuar con programas autorizados en la Central de Aplicaciones. Está prohibido interactuar con programas no autorizados.
             
             Args:
-                task_description: Descripción detallada de la tarea que se debe realizar en la computadora.
-                target_app: Nombre opcional del programa o aplicación con la que se desea interactuar.
+                task_description: Descripción detallada de la tarea a realizar en la computadora.
+                target_app: Nombre opcional de la aplicación autorizada involucrada (ej. 'Chrome', 'Blender').
             """
             logger.info(f"Jarvis AI tool call: control_computer('{task_description}', target_app='{target_app}')")
             if self.control_computer_callback:
@@ -41,10 +41,10 @@ class JarvisAI:
             return "Error: Callback de control de computadora no configurado en el sistema."
 
         def open_external_app(app_name: str) -> str:
-            """Abre una aplicación, programa o ejecuta un script (ej. scripts de Python, 'Chrome', 'Blender', etc.) por su nombre.
+            """Abre una aplicación o script local ÚNICAMENTE si se encuentra registrado y autorizado en la Central de Aplicaciones ('apps'). Si el programa no está registrado en la lista de apps, no está permitido abrirlo bajo ningún concepto y la solicitud será denegada por seguridad.
             
             Args:
-                app_name: El nombre de la aplicación, programa o script a abrir o ejecutar.
+                app_name: El nombre de la aplicación o script autorizado a abrir o ejecutar.
             """
             logger.info(f"Jarvis AI tool call: open_external_app('{app_name}')")
             if self.open_app_callback:

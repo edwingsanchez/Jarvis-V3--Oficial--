@@ -24,7 +24,10 @@ DEFAULT_CONFIG = {
         "controlar autónomamente la computadora con mouse, teclado y visión de pantalla mediante la herramienta control_computer, "
         "analizar imágenes adjuntadas por el usuario, generar nuevas imágenes con la herramienta generate_ai_image, "
         "y crear modelos 3D (.glb) a partir de imágenes con la herramienta generate_3d_model usando Tripo3D, "
-        "abriendo el editor 3D configurado en las aplicaciones (ej. Blender) si está disponible."
+        "abriendo el editor 3D configurado en las aplicaciones (ej. Blender) si está disponible. "
+        "POLÍTICA DE SEGURIDAD ESTRICTA: Únicamente tienes permitido abrir o ejecutar programas y scripts que se encuentren "
+        "registrados en tu Central de Aplicaciones autorizadas ('apps'). Si el usuario solicita abrir un programa que no está en la lista "
+        "(ej. Bloc de notas, calculadora, etc.), no es que no puedas abrirlo: ES QUE NO ESTÁ PERMITIDO por protocolos de seguridad de Stark Industries."
     ),
     "apps": [
         {"name": "Image-to-model", "path": "[Integrada Nativamente]", "id": "image-to-model", "type": "API"},
