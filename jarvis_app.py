@@ -1254,9 +1254,14 @@ class JarvisApp(ctk.CTk):
         self.grid_columnconfigure(1, weight=1) # Main View
         self.grid_rowconfigure(0, weight=1)
         
-        # Tracks active view
+        # Tracks active view & collapsible sidebar state
         self.active_frame = None
         self.active_button = None
+        self.sidebar_collapsed = False
+        self.sidebar_expanded_width = 220
+        self.sidebar_collapsed_width = 68
+        self._sidebar_anim_id = None
+        self.bind("<Control-b>", lambda e: self.toggle_sidebar())
         
         # Build UI Components
         self.setup_sidebar()
@@ -1358,99 +1363,205 @@ class JarvisApp(ctk.CTk):
         self.init_ai_client()
 
     def setup_sidebar(self):
-        """Creates the sidebar frame with title and navigation buttons."""
-        self.sidebar_frame = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color="#0a0f1d")
+        """Creates the collapsible sidebar frame with toggle button, branding, navigation, and status."""
+        self.sidebar_frame = ctk.CTkFrame(
+            self,
+            width=self.sidebar_expanded_width,
+            corner_radius=0,
+            fg_color="#0a0f1d",
+            border_width=1,
+            border_color="#141e33"
+        )
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
-        self.sidebar_frame.grid_rowconfigure(0, weight=0) # Title
-        self.sidebar_frame.grid_rowconfigure(1, weight=1) # Buttons Navigation
-        self.sidebar_frame.grid_rowconfigure(2, weight=0) # Status Indicator
-        
-        # Title / Logo
+        self.sidebar_frame.grid_propagate(False)
+        self.sidebar_frame.grid_columnconfigure(0, weight=1)
+        self.sidebar_frame.grid_rowconfigure(0, weight=0)  # Top Header + Collapse Toggle
+        self.sidebar_frame.grid_rowconfigure(1, weight=1)  # Navigation Buttons
+        self.sidebar_frame.grid_rowconfigure(2, weight=0)  # System Status Indicator
+
+        # Header container (Branding + Collapse Toggle Button)
+        self.sidebar_header = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
+        self.sidebar_header.grid(row=0, column=0, sticky="ew", padx=12, pady=(20, 12))
+
+        self.brand_frame = ctk.CTkFrame(self.sidebar_header, fg_color="transparent")
+        self.brand_frame.pack(side="left", fill="x", expand=True)
+
         self.logo_lbl = ctk.CTkLabel(
-            self.sidebar_frame, 
-            text="J.A.R.V.I.S.", 
-            font=("Segoe UI", 26, "bold"), 
-            text_color="#00e5ff"
+            self.brand_frame,
+            text="J.A.R.V.I.S.",
+            font=("Segoe UI", 22, "bold"),
+            text_color="#00e5ff",
+            anchor="w"
         )
-        self.logo_lbl.grid(row=0, column=0, padx=20, pady=(30, 5))
-        
+        self.logo_lbl.pack(anchor="w", padx=(6, 0))
+
         self.subtitle_lbl = ctk.CTkLabel(
-            self.sidebar_frame, 
-            text="STARK INDUSTRIES", 
-            font=("Segoe UI", 9, "bold"), 
-            text_color="#ffb300"
+            self.brand_frame,
+            text="STARK INDUSTRIES",
+            font=("Segoe UI", 9, "bold"),
+            text_color="#ffb300",
+            anchor="w"
         )
-        self.subtitle_lbl.grid(row=0, column=0, padx=20, pady=(60, 20))
-        
+        self.subtitle_lbl.pack(anchor="w", padx=(6, 0))
+
+        self.btn_toggle_sidebar = ctk.CTkButton(
+            self.sidebar_header,
+            text="◀",
+            width=34,
+            height=34,
+            corner_radius=8,
+            font=("Segoe UI", 13, "bold"),
+            fg_color="#101827",
+            hover_color="#1c2541",
+            text_color="#00e5ff",
+            border_width=1,
+            border_color="#1b2538",
+            command=self.toggle_sidebar
+        )
+        self.btn_toggle_sidebar.pack(side="right", padx=(4, 2))
+
         # Navigation Buttons Frame
         self.nav_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="transparent")
         self.nav_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=10)
-        
+
         # Chat Button
         self.btn_tab_chat = ctk.CTkButton(
             self.nav_frame,
             text="💬   Chat",
             anchor="w",
             font=("Segoe UI", 14, "bold"),
-            height=40,
+            height=42,
             fg_color="transparent",
             text_color="#a5b1c2",
             hover_color="#1e272e",
             command=lambda: self.show_view("chat", self.btn_tab_chat)
         )
         self.btn_tab_chat.pack(fill="x", pady=5)
-        
+
         # Apps Button
         self.btn_tab_apps = ctk.CTkButton(
             self.nav_frame,
             text="🚀   Apps",
             anchor="w",
             font=("Segoe UI", 14, "bold"),
-            height=40,
+            height=42,
             fg_color="transparent",
             text_color="#a5b1c2",
             hover_color="#1e272e",
             command=lambda: self.show_view("apps", self.btn_tab_apps)
         )
         self.btn_tab_apps.pack(fill="x", pady=5)
-        
+
         # Config Button
         self.btn_tab_config = ctk.CTkButton(
             self.nav_frame,
             text="⚙️   Configuración",
             anchor="w",
             font=("Segoe UI", 14, "bold"),
-            height=40,
+            height=42,
             fg_color="transparent",
             text_color="#a5b1c2",
             hover_color="#1e272e",
             command=lambda: self.show_view("config", self.btn_tab_config)
         )
         self.btn_tab_config.pack(fill="x", pady=5)
-        
+
         # Status / Connection indicator at the bottom of sidebar
         self.status_frame = ctk.CTkFrame(self.sidebar_frame, fg_color="#0e1726", height=60, corner_radius=8)
-        self.status_frame.grid(row=2, column=0, padx=15, pady=20, sticky="ew")
+        self.status_frame.grid(row=2, column=0, padx=14, pady=20, sticky="ew")
         self.status_frame.pack_propagate(False)
-        
+
         self.status_title = ctk.CTkLabel(
-            self.status_frame, 
-            text="ESTADO DEL SISTEMA", 
-            font=("Segoe UI", 10, "bold"), 
+            self.status_frame,
+            text="ESTADO DEL SISTEMA",
+            font=("Segoe UI", 10, "bold"),
             text_color="#57606f"
         )
         self.status_title.pack(anchor="w", padx=10, pady=(5, 2))
-        
+
         # AI Status Line
         self.gemini_status_frame = ctk.CTkFrame(self.status_frame, fg_color="transparent")
         self.gemini_status_frame.pack(fill="x", padx=10)
-        
+
         self.gemini_dot = ctk.CTkLabel(self.gemini_status_frame, text="●", text_color="red", font=("Segoe UI", 14))
         self.gemini_dot.pack(side="left")
         self.gemini_status_lbl = ctk.CTkLabel(self.gemini_status_frame, text=" IA: Desconectada", font=("Segoe UI", 11), text_color="#a5b1c2")
         self.gemini_status_lbl.pack(side="left")
-        
+
         self.update_system_status()
+
+    def _apply_sidebar_content_mode(self, collapsed):
+        """Updates inner sidebar labels, alignments, and paddings for collapsed vs expanded mode."""
+        if collapsed:
+            self.brand_frame.pack_forget()
+            self.sidebar_header.grid_configure(padx=8, pady=(20, 12))
+            self.btn_toggle_sidebar.pack_configure(side="top", padx=0)
+            self.btn_toggle_sidebar.configure(text="☰", width=44, height=38)
+
+            self.nav_frame.grid_configure(padx=8)
+            self.btn_tab_chat.configure(text="💬", anchor="center", font=("Segoe UI", 16))
+            self.btn_tab_apps.configure(text="🚀", anchor="center", font=("Segoe UI", 16))
+            self.btn_tab_config.configure(text="⚙️", anchor="center", font=("Segoe UI", 16))
+
+            self.status_title.pack_forget()
+            self.gemini_status_lbl.pack_forget()
+            self.status_frame.configure(height=44)
+            self.status_frame.grid_configure(padx=10, pady=20)
+            self.gemini_status_frame.pack_configure(fill="both", expand=True, padx=0)
+            self.gemini_dot.pack_configure(side="top", expand=True)
+        else:
+            self.sidebar_header.grid_configure(padx=12, pady=(20, 12))
+            self.btn_toggle_sidebar.pack_forget()
+            self.brand_frame.pack(side="left", fill="x", expand=True)
+            self.btn_toggle_sidebar.configure(text="◀", width=34, height=34)
+            self.btn_toggle_sidebar.pack(side="right", padx=(4, 2))
+
+            self.nav_frame.grid_configure(padx=10)
+            self.btn_tab_chat.configure(text="💬   Chat", anchor="w", font=("Segoe UI", 14, "bold"))
+            self.btn_tab_apps.configure(text="🚀   Apps", anchor="w", font=("Segoe UI", 14, "bold"))
+            self.btn_tab_config.configure(text="⚙️   Configuración", anchor="w", font=("Segoe UI", 14, "bold"))
+
+            self.gemini_status_frame.pack_forget()
+            self.status_frame.configure(height=60)
+            self.status_frame.grid_configure(padx=14, pady=20)
+            self.status_title.pack(anchor="w", padx=10, pady=(5, 2))
+            self.gemini_status_frame.pack(fill="x", expand=False, padx=10)
+            self.gemini_dot.pack_configure(side="left", expand=False)
+            self.gemini_status_lbl.pack(side="left")
+
+    def toggle_sidebar(self):
+        """Smoothly collapses or expands the navigation sidebar."""
+        if self._sidebar_anim_id is not None:
+            try:
+                self.after_cancel(self._sidebar_anim_id)
+            except Exception:
+                pass
+            self._sidebar_anim_id = None
+
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        target_w = self.sidebar_collapsed_width if self.sidebar_collapsed else self.sidebar_expanded_width
+        current_w = int(self.sidebar_frame.cget("width"))
+
+        # Switch to compact icon mode immediately before shrinking so labels never clip
+        if self.sidebar_collapsed:
+            self._apply_sidebar_content_mode(True)
+
+        steps = 6
+        delta = (target_w - current_w) / steps
+
+        def _animate_step(step_idx, cur_val):
+            if step_idx >= steps:
+                self.sidebar_frame.configure(width=target_w)
+                if not self.sidebar_collapsed:
+                    self._apply_sidebar_content_mode(False)
+                self._sidebar_anim_id = None
+                return
+
+            next_val = cur_val + delta
+            self.sidebar_frame.configure(width=int(round(next_val)))
+            self._sidebar_anim_id = self.after(12, lambda: _animate_step(step_idx + 1, next_val))
+
+        _animate_step(0, float(current_w))
 
     def update_system_status(self):
         """Updates the visual status dots and labels for the active AI provider."""
