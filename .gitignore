@@ -1,0 +1,14 @@
+# Configuration file with private API keys
+config.json
+
+# Python caches and artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+
+# Storage directories
+models/*.glb
+images/*.png
+!images/.gitkeep
+!models/.gitkeep

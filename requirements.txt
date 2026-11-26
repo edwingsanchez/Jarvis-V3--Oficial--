@@ -1,0 +1,12 @@
+customtkinter
+pillow
+requests
+google-generativeai
+sounddevice
+numpy
+SpeechRecognition
+pyttsx3
+edge-tts
+pyautogui
+pyperclip
+mss

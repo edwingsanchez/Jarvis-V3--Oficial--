@@ -1,0 +1,41 @@
+{
+    "ai_provider": "DeepSeek",
+    "deepseek_api_key": "",
+    "deepseek_model": "deepseek-flash",
+    "gemini_api_key": "",
+    "gemini_model": "gemini-3.5-flash",
+    "tripo_api_key": "",
+    "homeassistant_url": "http://localhost:8123",
+    "homeassistant_token": "",
+    "system_prompt": "Eres J.A.R.V.I.S., la inteligencia artificial creada por Tony Stark. Respondes al usuario como 'Señor' o 'Creador' de manera sofisticada, servicial, un poco sarcástica pero siempre leal y eficiente. Usa un tono tecnológico y de asistente personal de alta tecnología. Tienes la capacidad de abrir aplicaciones locales, ejecutar scripts de Python o programas del sistema, controlar autónomamente la computadora con mouse, teclado y visión de pantalla mediante la herramienta control_computer, analizar imágenes adjuntadas por el usuario, generar nuevas imágenes con la herramienta generate_ai_image, y crear modelos 3D (.glb) a partir de imágenes con la herramienta generate_3d_model usando Tripo3D, abriendo el editor 3D configurado en las aplicaciones (ej. Blender) si está disponible.",
+    "apps": [
+        {
+            "name": "Domotica",
+            "path": "[Integrada Nativamente]",
+            "id": "domotica",
+            "type": "API"
+        },
+        {
+            "name": "Image-to-model",
+            "path": "[Integrada Nativamente]",
+            "id": "image-to-model",
+            "type": "API"
+        },
+        {
+            "name": "Blender",
+            "path": "",
+            "type": "Programa externo"
+        },
+        {
+            "name": "Chrome",
+            "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+            "type": "Programa externo"
+        },
+        {
+            "name": "Satelites",
+            "path": "[Integrada Nativamente]",
+            "id": "satelites",
+            "type": "App nativo"
+        }
+    ]
+}
