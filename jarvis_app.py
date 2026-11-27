@@ -15,8 +15,32 @@ from gemini_client import JarvisAI
 from deepseek_client import JarvisDeepSeekAI
 from computer_controller import ComputerAgent
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+try:
+    from rich.console import Console as _RichConsole
+    from rich.panel import Panel as _RichPanel
+    from rich.logging import RichHandler as _RichHandler
+    from rich.markup import escape as _rich_escape
+    from rich import box as _rich_box
+    _JARVIS_CONSOLE = _RichConsole(highlight=False)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[_RichHandler(console=_JARVIS_CONSOLE, rich_tracebacks=True, show_path=False)]
+    )
+except ImportError:
+    _JARVIS_CONSOLE = None
+    _rich_escape = lambda s: str(s)
+    logging.basicConfig(level=logging.INFO)
+
 logger = logging.getLogger("jarvis_app")
 
 # Set customtkinter appearance
@@ -1269,6 +1293,37 @@ class JarvisApp(ctk.CTk):
         
         # Show default tab (Chat)
         self.show_view("chat", self.btn_tab_chat)
+        self._print_startup_terminal_banner()
+
+    def _print_startup_terminal_banner(self):
+        """Displays a styled terminal banner on startup inspired by windows_ai_controller."""
+        if _JARVIS_CONSOLE is None:
+            return
+        provider = self.config.get("ai_provider", "DeepSeek")
+        model = (
+            self.config.get("deepseek_model", "deepseek-v4-pro")
+            if provider == "DeepSeek"
+            else self.config.get("gemini_model", "gemini-3.5-flash")
+        )
+        apps_count = len(self.config.get("apps", []))
+        banner = (
+            "\n"
+            "╔════════════════════════════════════════════════════════════════════╗\n"
+            "║            J.A.R.V.I.S. — CENTRO DE OPERACIONES STARK              ║\n"
+            "║     Multimodal (DeepSeek / Gemini) | PyAutoGUI | Live Talking      ║\n"
+            "╚════════════════════════════════════════════════════════════════════╝"
+        )
+        _JARVIS_CONSOLE.print(f"[bold cyan]{banner}[/bold cyan]")
+        _JARVIS_CONSOLE.print("[bold yellow]⚡ PROTOCOLOS ACTIVOS EN TERMINAL:[/bold yellow]")
+        _JARVIS_CONSOLE.print(
+            f"  • [bold white]Núcleo IA:[/bold white] [bold green]{_rich_escape(provider)}[/bold green] "
+            f"([cyan]{_rich_escape(model)}[/cyan]) | [bold white]Apps autorizadas:[/bold white] [cyan]{apps_count}[/cyan]"
+        )
+        _JARVIS_CONSOLE.print("  • Monitoreo en vivo de razonamiento IA, acciones y verificación visual de pasos")
+        _JARVIS_CONSOLE.print(
+            "  • [bold red]Kill Switch:[/bold red] Presiona la tecla "
+            "[bold white on red] Esc [/bold white on red] en cualquier momento para abortar el control autónomo\n"
+        )
 
     def init_ai_client(self):
         """Initializes the active AI client (DeepSeek or Gemini) if API Key exists."""
@@ -1300,7 +1355,8 @@ class JarvisApp(ctk.CTk):
             "\n\nCONTROL AUTÓNOMO DEL SISTEMA OPERATIVO:\n"
             "Tienes la capacidad de controlar activamente la computadora (mouse, teclado y pantalla mediante visión por IA) usando la herramienta 'control_computer'. "
             "Solo puedes usar esta herramienta para interactuar con el escritorio o con aplicaciones previamente autorizadas en tu lista. Está terminantemente prohibido abrir programas no autorizados. "
-            "Cuando el usuario te pida abrir un programa autorizado y usarlo (ej. 'abre Chrome y abre una página y explora esa página', 'entra a wikipedia y busca X', 'controla la pantalla', 'haz clics', etc.), DEBES invocar la herramienta 'control_computer'. "
+            "Cuando el usuario te pida hacer algo en un programa autorizado o abrirlo y usarlo (ej. 'en Chrome busca X', 'abre Chrome y entra a una página', 'en Blender haz X', 'controla la pantalla', etc.), DEBES invocar 'control_computer' e indicar siempre el nombre del programa en el parámetro 'target_app' (por ejemplo 'Chrome' o 'Blender'). "
+            "J.A.R.V.I.S. revisará automáticamente si el programa ya está abierto para activar su ventana existente sin volver a abrirlo. "
             "Al invocarla, responde de forma inmediata confirmando que estás trabajando en ello ('Enseguida, jefe. Iniciando control de la computadora...')."
         )
         effective_sys_prompt += computer_use_instruction
@@ -2578,6 +2634,151 @@ class JarvisApp(ctk.CTk):
         # Fade out
         self.after(1500, toast.destroy)
 
+    def _send_windows_native_toast(self, title, message):
+        """Dispatches a native Windows 10/11 OS Toast Notification via WinRT in a hidden background process."""
+        if os.name != "nt":
+            return
+        import subprocess
+        ps_script = (
+            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null; "
+            "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType = WindowsRuntime] | Out-Null; "
+            "$template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+            "$textNodes = $template.GetElementsByTagName('text'); "
+            "$textNodes.Item(0).AppendChild($template.CreateTextNode($env:JARVIS_TOAST_TITLE)) | Out-Null; "
+            "$textNodes.Item(1).AppendChild($template.CreateTextNode($env:JARVIS_TOAST_BODY)) | Out-Null; "
+            "$toast = [Windows.UI.Notifications.ToastNotification]::new($template); "
+            "$appId = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe'; "
+            "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($appId).Show($toast)"
+        )
+        env = os.environ.copy()
+        env["JARVIS_TOAST_TITLE"] = str(title)[:100]
+        env["JARVIS_TOAST_BODY"] = str(message)[:220]
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps_script],
+                env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=8,
+                check=False
+            )
+        except Exception as ex:
+            logger.debug(f"Native Windows toast skipped: {ex}")
+
+    def _show_completion_banner(self, title, message, level="success"):
+        """Displays a sleek topmost Stark notification card in the top-right corner of the screen."""
+        try:
+            accent_map = {
+                "success": "#2ed573",
+                "warning": "#ffa502",
+                "error": "#ff4757",
+                "info": "#00e5ff",
+            }
+            border_col = accent_map.get(level, "#00e5ff")
+            short_msg = str(message).strip()
+            if len(short_msg) > 150:
+                short_msg = short_msg[:147] + "..."
+
+            banner = ctk.CTkToplevel(self)
+            banner.overrideredirect(True)
+            banner.attributes("-topmost", True)
+            banner.configure(fg_color="#071526")
+
+            w, h = 370, 92
+            sw = self.winfo_screenwidth()
+            x = max(20, sw - w - 24)
+            y = 28
+            banner.geometry(f"{w}x{h}+{x}+{y}")
+
+            card = ctk.CTkFrame(
+                banner,
+                fg_color="#071526",
+                border_width=2,
+                border_color=border_col,
+                corner_radius=10
+            )
+            card.pack(fill="both", expand=True)
+
+            hdr = ctk.CTkFrame(card, fg_color="transparent")
+            hdr.pack(fill="x", padx=12, pady=(8, 2))
+
+            lbl_title = ctk.CTkLabel(
+                hdr,
+                text=title,
+                font=("Segoe UI", 12, "bold"),
+                text_color=border_col,
+                anchor="w"
+            )
+            lbl_title.pack(side="left", fill="x", expand=True)
+
+            def _dismiss():
+                try:
+                    if banner.winfo_exists():
+                        banner.destroy()
+                except Exception:
+                    pass
+
+            btn_close = ctk.CTkButton(
+                hdr,
+                text="✕",
+                width=22,
+                height=20,
+                corner_radius=6,
+                fg_color="transparent",
+                hover_color="#1b2538",
+                text_color="#a5b1c2",
+                font=("Segoe UI", 11, "bold"),
+                command=_dismiss
+            )
+            btn_close.pack(side="right")
+
+            lbl_body = ctk.CTkLabel(
+                card,
+                text=short_msg,
+                font=("Segoe UI", 11),
+                text_color="#ecf0f1",
+                justify="left",
+                anchor="w",
+                wraplength=340
+            )
+            lbl_body.pack(fill="x", padx=12, pady=(0, 8))
+
+            self.after(5500, _dismiss)
+        except Exception as ex:
+            logger.debug(f"Error showing Stark completion banner: {ex}")
+
+    def notify_task_completion(self, title, message, level="success"):
+        """Sends both a native Windows desktop notification and an on-screen Stark HUD banner."""
+        threading.Thread(
+            target=self._send_windows_native_toast,
+            args=(title, message),
+            daemon=True
+        ).start()
+        self.after(0, lambda: self._show_completion_banner(title, message, level=level))
+
+    def _watch_script_process(self, proc, app_display_name):
+        """Monitors an authorized background script and notifies the user as soon as it finishes."""
+        def _watcher():
+            try:
+                rc = proc.wait()
+                if rc == 0:
+                    self.console_log(f"Nueva aplicación/script finalizado con éxito: '{app_display_name}'")
+                    self.notify_task_completion(
+                        "✅ J.A.R.V.I.S. — Script Finalizado",
+                        f"El script '{app_display_name}' terminó de ejecutarse correctamente.",
+                        level="success"
+                    )
+                else:
+                    self.console_log(f"Advertencia: El script '{app_display_name}' finalizó con código {rc}.")
+                    self.notify_task_completion(
+                        "⚠️ J.A.R.V.I.S. — Script Finalizado",
+                        f"El script '{app_display_name}' terminó con código de salida {rc}.",
+                        level="warning"
+                    )
+            except Exception as ex:
+                logger.debug(f"Script watcher error for {app_display_name}: {ex}")
+
+        threading.Thread(target=_watcher, daemon=True).start()
+
     def send_suggestion(self, text):
         self.chat_input.delete(0, "end")
         self.chat_input.insert(0, text)
@@ -2675,6 +2876,10 @@ class JarvisApp(ctk.CTk):
             self.console_log("Advertencia: Ya existe una tarea de control en ejecución.")
             return "Ya hay una tarea de control en progreso, señor."
 
+        # Auto-infer authorized target_app from task_description if omitted by the LLM
+        if not target_app:
+            target_app = self._infer_target_app_from_task(task_description)
+
         # Security Check: If a target app is specified, it MUST be authorized in apps
         if target_app:
             allowed, app_obj = self.is_app_allowed(target_app)
@@ -2707,14 +2912,24 @@ class JarvisApp(ctk.CTk):
             )
         self.after(0, set_working_ui)
 
-        # 2. If target app is specified and authorized, try opening/focusing it first
+        # 2. If target app is specified and authorized, check if already open & bring window to front (or launch once)
         if target_app:
-            self.console_log(f"Iniciando o enfocando aplicación autorizada: '{target_app}'...")
+            self.console_log(f"Verificando si '{target_app}' ya se encuentra abierto...")
             try:
-                self.open_app_by_name(target_app)
-                time.sleep(1.5)
+                open_res = self.open_app_by_name(target_app, notify=False, reuse_existing=True)
+                if "ya estaba abierto" in open_res:
+                    time.sleep(0.45)
+                else:
+                    # Wait briefly for newly launched app window to appear, then bring it to front
+                    allowed_chk, app_meta = self.is_app_allowed(target_app)
+                    for _ in range(8):
+                        time.sleep(0.35)
+                        if allowed_chk and app_meta:
+                            focused, _ = self.focus_existing_app_window(app_meta, target_app)
+                            if focused:
+                                break
             except Exception as e:
-                self.console_log(f"Nota al abrir app objetivo: {e}")
+                self.console_log(f"Nota al abrir/enfocar app objetivo: {e}")
 
         # 3. Finish callback
         def on_finish(final_summary, was_cancelled):
@@ -2733,11 +2948,21 @@ class JarvisApp(ctk.CTk):
                 if was_cancelled:
                     abort_msg = "Operación cancelada por parada de emergencia (tecla Esc), señor."
                     self.add_chat_bubble("J.A.R.V.I.S.", abort_msg)
+                    self.notify_task_completion(
+                        "🛑 J.A.R.V.I.S. — Tarea Detenida",
+                        "La operación autónoma fue cancelada por parada de emergencia (Esc).",
+                        level="warning"
+                    )
                     if self.live_talking_active:
                         threading.Thread(target=lambda: self.speak_text_sync(abort_msg), daemon=True).start()
                 else:
                     completion_msg = f"He terminado la tarea, señor. {final_summary}"
                     self.add_chat_bubble("J.A.R.V.I.S.", completion_msg)
+                    self.notify_task_completion(
+                        "✅ J.A.R.V.I.S. — Tarea Finalizada",
+                        final_summary or "La operación solicitada ha concluido con éxito.",
+                        level="success"
+                    )
                     if self.live_talking_active:
                         threading.Thread(target=lambda: self.speak_text_sync(completion_msg), daemon=True).start()
 
@@ -2958,10 +3183,25 @@ class JarvisApp(ctk.CTk):
                 try:
                     subprocess.Popen([editor_exec, os.path.abspath(save_path)], creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
                     editor_title = editor_app.get("name", "el editor de modelos 3D")
+                    self.notify_task_completion(
+                        "✅ J.A.R.V.I.S. — Modelo 3D Listo",
+                        f"'{proj_name}.glb' generado y abierto en {editor_title}.",
+                        level="success"
+                    )
                     return f"Éxito: El modelo 3D '{proj_name}.glb' ha sido generado exitosamente mediante Tripo3D y guardado en '{save_path}'. Se ha abierto automáticamente en {editor_title}."
                 except Exception as ex_open:
+                    self.notify_task_completion(
+                        "⚠️ J.A.R.V.I.S. — Modelo 3D Guardado",
+                        f"'{proj_name}.glb' generado, pero no se pudo abrir {editor_app.get('name')}.",
+                        level="warning"
+                    )
                     return f"Éxito: El modelo 3D '{proj_name}.glb' se generó exitosamente y se guardó en '{save_path}', pero ocurrió un error al intentar abrirlo en {editor_app.get('name')}: {ex_open}"
             else:
+                self.notify_task_completion(
+                    "✅ J.A.R.V.I.S. — Modelo 3D Generado",
+                    f"'{proj_name}.glb' se ha guardado en la carpeta models/.",
+                    level="success"
+                )
                 return f"Éxito: El modelo 3D '{proj_name}.glb' ha sido generado exitosamente mediante Tripo3D y guardado en la carpeta '{os.path.abspath(self.models_dir)}'. No hay un editor de modelos 3D configurado en la lista de aplicaciones para abrirlo automáticamente."
                 
         except Exception as e:
@@ -3269,8 +3509,321 @@ class JarvisApp(ctk.CTk):
                 
         return False, None
 
-    def open_app_by_name(self, app_name):
-        """Launches the external application, script, or system program ONLY if authorized in apps."""
+    def _infer_target_app_from_task(self, task_description):
+        """Infers an authorized external application mentioned in task_description when target_app was omitted."""
+        if not task_description:
+            return ""
+        import re
+        task_low = task_description.lower()
+        for app in self.config.get("apps", []):
+            if app.get("type", "Programa externo") != "Programa externo":
+                continue
+            aname = str(app.get("name", "")).strip()
+            if not aname:
+                continue
+            pattern = r"\b" + re.escape(aname.lower()) + r"\b"
+            if re.search(pattern, task_low):
+                return aname
+        return ""
+
+    def _get_candidate_exe_names(self, target_app, fallback_name=""):
+        """Returns candidate Windows executable basenames and title keywords for an authorized app."""
+        exe_Aliases = {
+            "chrome": ["chrome.exe"],
+            "google chrome": ["chrome.exe"],
+            "blender": ["blender.exe"],
+            "edge": ["msedge.exe"],
+            "microsoft edge": ["msedge.exe"],
+            "brave": ["brave.exe"],
+            "firefox": ["firefox.exe"],
+            "opera": ["opera.exe"],
+            "code": ["code.exe"],
+            "vscode": ["code.exe"],
+            "visual studio code": ["code.exe"],
+            "postman": ["postman.exe"],
+            "spotify": ["spotify.exe"],
+            "discord": ["discord.exe"],
+            "vlc": ["vlc.exe"],
+            "word": ["winword.exe"],
+            "excel": ["excel.exe"],
+            "powerpoint": ["powerpnt.exe"],
+            "obs": ["obs64.exe", "obs32.exe"],
+            "steam": ["steam.exe"],
+        }
+        candidate_exes = set()
+        title_keywords = []
+
+        app_name = str(target_app.get("name", fallback_name) or fallback_name).strip()
+        app_low = app_name.lower()
+        path = str(target_app.get("path", "") or "").strip()
+
+        if path and not path.startswith("["):
+            base = os.path.basename(path).lower()
+            if base.endswith(".exe"):
+                candidate_exes.add(base)
+            elif base.endswith(".lnk"):
+                stem = os.path.splitext(base)[0]
+                for key, exes in exe_Aliases.items():
+                    if key in stem:
+                        candidate_exes.update(exes)
+
+        if app_low in exe_Aliases:
+            candidate_exes.update(exe_Aliases[app_low])
+        else:
+            for key, exes in exe_Aliases.items():
+                if key in app_low:
+                    candidate_exes.update(exes)
+
+        clean_stem = os.path.splitext(app_low)[0].strip()
+        if clean_stem and " " not in clean_stem:
+            candidate_exes.add(f"{clean_stem}.exe")
+
+        if len(app_low) >= 3:
+            title_keywords.append(app_low)
+
+        return candidate_exes, title_keywords
+
+    def _init_win32_signatures(self):
+        """Configures 64-bit safe ctypes signatures for Win32 window management APIs."""
+        if getattr(self, "_win32_sigs_ready", False) or os.name != "nt":
+            return
+        import ctypes
+        from ctypes import wintypes
+
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        u32.IsWindowVisible.argtypes = [wintypes.HWND]
+        u32.IsWindowVisible.restype = wintypes.BOOL
+        u32.IsIconic.argtypes = [wintypes.HWND]
+        u32.IsIconic.restype = wintypes.BOOL
+        u32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+        u32.GetWindowTextLengthW.restype = ctypes.c_int
+        u32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        u32.GetWindowTextW.restype = ctypes.c_int
+        u32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+        u32.GetWindowLongW.restype = wintypes.LONG
+        u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u32.GetWindowRect.restype = wintypes.BOOL
+        u32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        u32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        u32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+        u32.ShowWindow.restype = wintypes.BOOL
+        u32.BringWindowToTop.argtypes = [wintypes.HWND]
+        u32.BringWindowToTop.restype = wintypes.BOOL
+        u32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        u32.SetForegroundWindow.restype = wintypes.BOOL
+        u32.SetFocus.argtypes = [wintypes.HWND]
+        u32.SetFocus.restype = wintypes.HWND
+        u32.GetForegroundWindow.argtypes = []
+        u32.GetForegroundWindow.restype = wintypes.HWND
+        u32.AllowSetForegroundWindow.argtypes = [ctypes.c_int]
+        u32.AllowSetForegroundWindow.restype = wintypes.BOOL
+        u32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
+        u32.AttachThreadInput.restype = wintypes.BOOL
+
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
+        ]
+        k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+
+        dwmapi = getattr(ctypes.windll, "dwmapi", None)
+        if dwmapi is not None:
+            dwmapi.DwmGetWindowAttribute.argtypes = [
+                wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD
+            ]
+            dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
+
+        self._win32_sigs_ready = True
+
+    def _bring_hwnd_to_front(self, hwnd):
+        """Restores a minimized Win32 window (preserving maximized state if open) and brings it to the foreground."""
+        if os.name != "nt" or not hwnd:
+            return False
+        import ctypes
+        self._init_win32_signatures()
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        SW_RESTORE = 9
+        SW_SHOW = 5
+        try:
+            user32.AllowSetForegroundWindow(-1)
+            if user32.IsIconic(hwnd):
+                user32.ShowWindow(hwnd, SW_RESTORE)
+            else:
+                user32.ShowWindow(hwnd, SW_SHOW)
+
+            fg_hwnd = user32.GetForegroundWindow()
+            fg_tid = user32.GetWindowThreadProcessId(fg_hwnd, None) if fg_hwnd else 0
+            target_tid = user32.GetWindowThreadProcessId(hwnd, None)
+            cur_tid = kernel32.GetCurrentThreadId()
+
+            attached_fg = False
+            attached_target = False
+            if fg_tid and fg_tid != cur_tid:
+                attached_fg = bool(user32.AttachThreadInput(cur_tid, fg_tid, True))
+            if target_tid and target_tid != cur_tid and target_tid != fg_tid:
+                attached_target = bool(user32.AttachThreadInput(cur_tid, target_tid, True))
+
+            try:
+                user32.BringWindowToTop(hwnd)
+                user32.SetForegroundWindow(hwnd)
+                user32.SetFocus(hwnd)
+            finally:
+                if attached_target:
+                    user32.AttachThreadInput(cur_tid, target_tid, False)
+                if attached_fg:
+                    user32.AttachThreadInput(cur_tid, fg_tid, False)
+
+            if user32.GetForegroundWindow() != hwnd:
+                # Fallback gentle Alt tap to unlock Windows foreground restriction
+                VK_MENU = 0x12
+                KEYEVENTF_KEYUP = 0x0002
+                user32.keybd_event(VK_MENU, 0, 0, 0)
+                user32.SetForegroundWindow(hwnd)
+                user32.keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, 0)
+
+            return True
+        except Exception as ex:
+            logger.debug(f"Could not bring hwnd {hwnd} to front: {ex}")
+            return False
+
+    def focus_existing_app_window(self, target_app, fallback_name=""):
+        """
+        Checks if an authorized external application already has an open window on Windows.
+        If found (even if minimized), restores and brings that window to the foreground.
+        Returns (True, window_title) if found and activated, otherwise (False, '').
+        """
+        if os.name != "nt":
+            return False, ""
+
+        import ctypes, re
+        from ctypes import wintypes
+
+        self._init_win32_signatures()
+        candidate_exes, title_keywords = self._get_candidate_exe_names(target_app, fallback_name)
+        if not candidate_exes and not title_keywords:
+            return False, ""
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+        dwmapi = getattr(ctypes.windll, "dwmapi", None)
+        own_pid = os.getpid()
+
+        GWL_EXSTYLE = -20
+        WS_EX_TOOLWINDOW = 0x00000080
+        WS_EX_APPWINDOW = 0x00040000
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+
+        exe_matches = []
+        title_matches = []
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        def _enum_cb(hwnd, lparam):
+            try:
+                if not hwnd or not user32.IsWindowVisible(hwnd):
+                    return True
+                tlen = user32.GetWindowTextLengthW(hwnd)
+                if tlen <= 0:
+                    return True
+
+                ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                if (ex_style & WS_EX_TOOLWINDOW) and not (ex_style & WS_EX_APPWINDOW):
+                    return True
+
+                if dwmapi is not None:
+                    cloaked = ctypes.c_int(0)
+                    if dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked)) == 0:
+                        if cloaked.value != 0:
+                            return True
+
+                is_min = bool(user32.IsIconic(hwnd))
+                if not is_min:
+                    rect = wintypes.RECT()
+                    if user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                        if (rect.right - rect.left) < 120 or (rect.bottom - rect.top) < 80:
+                            return True
+
+                tbuf = ctypes.create_unicode_buffer(tlen + 1)
+                user32.GetWindowTextW(hwnd, tbuf, tlen + 1)
+                win_title = tbuf.value.strip()
+                if not win_title or win_title in ("Program Manager", "Default IME", "MSCTFIME UI"):
+                    return True
+
+                pid = wintypes.DWORD(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value == own_pid:
+                    return True
+
+                exe_base = ""
+                hproc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid.value)
+                if hproc:
+                    try:
+                        pbuf = ctypes.create_unicode_buffer(1024)
+                        psize = wintypes.DWORD(1024)
+                        if kernel32.QueryFullProcessImageNameW(hproc, 0, pbuf, ctypes.byref(psize)):
+                            exe_base = os.path.basename(pbuf.value).lower()
+                    finally:
+                        kernel32.CloseHandle(hproc)
+
+                if exe_base and exe_base in candidate_exes:
+                    exe_matches.append((hwnd, win_title))
+                    return True
+
+                low_title = win_title.lower()
+                for kw in title_keywords:
+                    if re.search(r"\b" + re.escape(kw) + r"\b", low_title):
+                        title_matches.append((hwnd, win_title))
+                        break
+            except Exception:
+                pass
+            return True
+
+        try:
+            user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
+        except Exception as ex:
+            logger.debug(f"Window enumeration error: {ex}")
+            return False, ""
+
+        chosen = exe_matches[0] if exe_matches else (title_matches[0] if title_matches else None)
+        if not chosen:
+            return False, ""
+
+        best_hwnd, best_title = chosen
+        if self._bring_hwnd_to_front(best_hwnd):
+            return True, best_title
+        return False, ""
+
+    def _open_or_focus_native_window(self, key, window_cls, label_text):
+        """Opens a native Stark window or brings its existing instance to the front if already open."""
+        if not hasattr(self, "_open_native_windows"):
+            self._open_native_windows = {}
+
+        def _show_on_ui():
+            existing = self._open_native_windows.get(key)
+            if existing is not None:
+                try:
+                    if existing.winfo_exists():
+                        existing.deiconify()
+                        existing.lift()
+                        existing.focus_force()
+                        return
+                except Exception:
+                    pass
+            self._open_native_windows[key] = window_cls(self)
+
+        self.console_log(f"Abriendo o activando ventana nativa {label_text}...")
+        self.after(0, _show_on_ui)
+        return f"Éxito: Se ha abierto o traído al frente la aplicación nativa {label_text}."
+
+    def open_app_by_name(self, app_name, notify=True, reuse_existing=True):
+        """Launches the external application, script, or system program ONLY if authorized in apps.
+        If reuse_existing is True and an external program already has an open window, restores & focuses it."""
         name_lower = app_name.lower().strip()
         
         allowed, target_app = self.is_app_allowed(app_name)
@@ -3286,31 +3839,19 @@ class JarvisApp(ctk.CTk):
         if target_app.get("id"):
             app_id = target_app["id"].lower().strip()
             if app_id == "image-to-model":
-                self.console_log("Abriendo aplicación nativa Image-to-model...")
-                self.after(0, lambda: ImageToModelWindow(self))
-                return "Éxito: Se ha inicializado la aplicación nativa Image-to-model."
+                return self._open_or_focus_native_window("image-to-model", ImageToModelWindow, "Image-to-model")
             elif app_id == "domotica":
-                self.console_log("Abriendo aplicación nativa Domótica...")
-                self.after(0, lambda: DomoticaWindow(self))
-                return "Éxito: Se ha inicializado la aplicación nativa Domótica."
+                return self._open_or_focus_native_window("domotica", DomoticaWindow, "Domótica")
             elif app_id == "satelites":
-                self.console_log("Abriendo radar de satélites...")
-                self.after(0, lambda: SatellitesWindow(self))
-                return "Éxito: Se ha inicializado el radar de satélites."
+                return self._open_or_focus_native_window("satelites", SatellitesWindow, "Radar de Satélites")
                 
         # Fallback native matches
         if name_lower in ("image-to-model", "image to model"):
-            self.console_log("Abriendo aplicación nativa Image-to-model...")
-            self.after(0, lambda: ImageToModelWindow(self))
-            return "Éxito: Se ha inicializado la aplicación nativa Image-to-model."
+            return self._open_or_focus_native_window("image-to-model", ImageToModelWindow, "Image-to-model")
         elif name_lower == "domotica":
-            self.console_log("Abriendo aplicación nativa Domótica...")
-            self.after(0, lambda: DomoticaWindow(self))
-            return "Éxito: Se ha inicializado la aplicación nativa Domótica."
+            return self._open_or_focus_native_window("domotica", DomoticaWindow, "Domótica")
         elif name_lower in ("satelites", "satélite", "satélites"):
-            self.console_log("Abriendo radar de satélites...")
-            self.after(0, lambda: SatellitesWindow(self))
-            return "Éxito: Se ha inicializado el radar de satélites."
+            return self._open_or_focus_native_window("satelites", SatellitesWindow, "Radar de Satélites")
             
         path = target_app.get("path", "").strip()
         app_type = target_app.get("type", "Programa externo")
@@ -3332,45 +3873,81 @@ class JarvisApp(ctk.CTk):
                     ext = os.path.splitext(abs_path)[1].lower()
                     
                     if ext in ('.py',):
-                        subprocess.Popen(
+                        proc = subprocess.Popen(
                             [sys.executable, abs_path], 
                             cwd=script_dir, 
                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
                         )
+                        if notify:
+                            self._watch_script_process(proc, app_display_name)
                         return f"Éxito: Se ha ejecutado el script de Python autorizado '{app_display_name}' ({abs_path})."
                     elif ext in ('.pyw',):
                         pyw = sys.executable.replace("python.exe", "pythonw.exe")
                         py_exec = pyw if os.path.exists(pyw) else sys.executable
-                        subprocess.Popen([py_exec, abs_path], cwd=script_dir)
+                        proc = subprocess.Popen([py_exec, abs_path], cwd=script_dir)
+                        if notify:
+                            self._watch_script_process(proc, app_display_name)
                         return f"Éxito: Se ha ejecutado el script de Python autorizado '{app_display_name}' ({abs_path})."
                     elif ext in ('.bat', '.cmd'):
-                        subprocess.Popen(
+                        proc = subprocess.Popen(
                             [abs_path], 
                             cwd=script_dir, 
                             shell=True, 
                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
                         )
+                        if notify:
+                            self._watch_script_process(proc, app_display_name)
                         return f"Éxito: Se ha ejecutado el archivo por lotes autorizado '{app_display_name}' ({abs_path})."
                     elif ext == '.ps1':
-                        subprocess.Popen(
+                        proc = subprocess.Popen(
                             ["powershell", "-ExecutionPolicy", "Bypass", "-File", abs_path], 
                             cwd=script_dir, 
                             creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0
                         )
+                        if notify:
+                            self._watch_script_process(proc, app_display_name)
                         return f"Éxito: Se ha ejecutado el script de PowerShell autorizado '{app_display_name}' ({abs_path})."
                     else:
                         if os.name == 'nt':
                             os.startfile(abs_path)
+                            if notify:
+                                self.notify_task_completion(
+                                    "🚀 J.A.R.V.I.S. — Script Iniciado",
+                                    f"Se ha ejecutado '{app_display_name}'.",
+                                    level="info"
+                                )
                         else:
-                            subprocess.Popen([abs_path], cwd=script_dir)
+                            proc = subprocess.Popen([abs_path], cwd=script_dir)
+                            if notify:
+                                self._watch_script_process(proc, app_display_name)
                         return f"Éxito: Se ha ejecutado el script autorizado '{app_display_name}' ({abs_path})."
                 else:
                     return f"Error: No se encontró el archivo del script autorizado '{app_display_name}' en la ruta '{path}'."
 
-            # --- EXTERNAL PROGRAM EXECUTION ---
+            # --- EXTERNAL PROGRAM EXECUTION (Check existing open window FIRST!) ---
+            if reuse_existing:
+                already_open, win_title = self.focus_existing_app_window(target_app, app_name)
+                if already_open:
+                    self.console_log(
+                        f"Nueva aplicación no requerida — '{app_display_name}' ya está abierto ('{win_title}'). Ventana restaurada y traída al frente."
+                    )
+                    if notify:
+                        self.notify_task_completion(
+                            "🪟 J.A.R.V.I.S. — Ventana Activada",
+                            f"'{app_display_name}' ya estaba abierto; se trajo su ventana al frente.",
+                            level="info"
+                        )
+                    return f"Éxito: '{app_display_name}' ya estaba abierto; se restauró y trajo su ventana existente al frente."
+
             if path and os.path.exists(path):
                 self.console_log(f"Abriendo aplicación externa autorizada: {app_display_name} ({path})...")
                 subprocess.Popen([path], creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
+                if notify:
+                    self.notify_task_completion(
+                        "🚀 J.A.R.V.I.S. — Aplicación Lista",
+                        f"'{app_display_name}' se ha abierto correctamente.",
+                        level="info"
+                    )
                 return f"Éxito: Se ha lanzado '{app_display_name}' desde su ruta física autorizada."
             else:
                 # If path is empty or an alias for this explicitly whitelisted app
@@ -3378,6 +3955,12 @@ class JarvisApp(ctk.CTk):
                 if resolved_cmd:
                     self.console_log(f"Abriendo aplicación externa autorizada vía alias: {app_display_name} ({resolved_cmd})...")
                     subprocess.Popen([resolved_cmd], creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0)
+                    if notify:
+                        self.notify_task_completion(
+                            "🚀 J.A.R.V.I.S. — Aplicación Lista",
+                            f"'{app_display_name}' se ha abierto correctamente.",
+                            level="info"
+                        )
                     return f"Éxito: Se lanzó la aplicación autorizada '{app_display_name}' a través de alias del sistema."
                 else:
                     error_msg = f"La aplicación '{app_display_name}' está autorizada en la lista pero no se encontró un ejecutable configurado válido."
@@ -3389,7 +3972,34 @@ class JarvisApp(ctk.CTk):
             return f"Error: {error_msg}"
 
     def console_log(self, text):
-        logger.info(text)
+        """Prints styled operational messages in the terminal inspired by windows_ai_controller."""
+        if _JARVIS_CONSOLE is None:
+            logger.info(text)
+            return
+
+        msg = str(text).strip()
+        low = msg.lower()
+        if "[seguridad]" in low or "acceso denegado" in low:
+            clean_sec = msg.replace("🛑 [SEGURIDAD]:", "").strip()
+            _JARVIS_CONSOLE.print(_RichPanel(
+                f"[bold red]🛡️ PROTOCOLO DE SEGURIDAD STARK — ACCESO DENEGADO[/bold red]\n\n"
+                f"[white]{_rich_escape(clean_sec)}[/white]",
+                border_style="red",
+                box=_rich_box.ROUNDED,
+                padding=(0, 1)
+            ))
+        elif "🛑" in msg or "error" in low or "excepción" in low:
+            _JARVIS_CONSOLE.print(f"[bold red]✖ {_rich_escape(msg)}[/bold red]")
+        elif "advertencia" in low or "nota al abrir" in low or "⚠" in msg:
+            _JARVIS_CONSOLE.print(f"[bold yellow]⚠ {_rich_escape(msg)}[/bold yellow]")
+        elif any(k in low for k in ("ejecutando", "abriendo", "iniciando control", "iniciando o enfocando")):
+            _JARVIS_CONSOLE.print(f"[bold magenta]▶ {_rich_escape(msg)}[/bold magenta]")
+        elif any(k in low for k in ("nueva aplicación", "editada", "reordenada", "movida")):
+            _JARVIS_CONSOLE.print(f"[bold green]✔ {_rich_escape(msg)}[/bold green]")
+        else:
+            _JARVIS_CONSOLE.print(f"[dim cyan]ℹ {_rich_escape(msg)}[/dim cyan]")
+
+    console_log._is_rich_terminal = True
 
     # ==========================================
     # VIEW: CONFIGURATION

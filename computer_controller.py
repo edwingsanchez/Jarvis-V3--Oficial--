@@ -11,6 +11,28 @@ from PIL import Image, ImageGrab
 import pyautogui
 import pyperclip
 
+try:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+    from rich.rule import Rule
+    from rich.markup import escape as rich_escape
+    from rich import box
+    _RICH_AVAILABLE = True
+    _term_console = Console(highlight=False)
+except ImportError:
+    _RICH_AVAILABLE = False
+    _term_console = None
+    rich_escape = lambda s: str(s)
+
 logger = logging.getLogger("computer_controller")
 
 # Safe defaults for PyAutoGUI
@@ -28,25 +50,198 @@ class ComputerAgent:
     
     def __init__(self, config, console_log_callback=None, confirmation_callback=None):
         self.config = config
-        self.console_log_callback = console_log_callback or (lambda text: logger.info(text))
+        self.console_log_callback = console_log_callback
         self.confirmation_callback = confirmation_callback
         
         self.is_running = False
         self.kill_switch_triggered = False
         self.current_thread = None
         self._esc_monitor_thread = None
-        
-    def log_terminal(self, text):
-        """Outputs text both to the J.A.R.V.I.S. console logger and stdout."""
-        try:
-            print(text, flush=True)
-        except Exception:
-            pass
-        if self.console_log_callback:
+
+    def _forward_callback(self, plain_text):
+        """Forwards plain text to custom external callbacks without duplicating Jarvis terminal output."""
+        if self.console_log_callback and not getattr(self.console_log_callback, "_is_rich_terminal", False):
             try:
-                self.console_log_callback(text)
+                self.console_log_callback(plain_text)
             except Exception:
                 pass
+
+    def log_terminal(self, text, level="info"):
+        """Outputs styled status messages to the terminal inspired by windows_ai_controller."""
+        self._forward_callback(text)
+        if _RICH_AVAILABLE and _term_console is not None:
+            safe = rich_escape(str(text).strip())
+            if level == "status":
+                _term_console.print(f"[dim cyan]ℹ {safe}[/dim cyan]")
+            elif level == "action":
+                _term_console.print(f"[bold magenta]▶ {safe}[/bold magenta]")
+            elif level == "success":
+                _term_console.print(f"[bold green]✔ {safe}[/bold green]")
+            elif level == "warning":
+                _term_console.print(f"[bold yellow]⚠ {safe}[/bold yellow]")
+            elif level == "error":
+                _term_console.print(f"[bold red]✖ {safe}[/bold red]")
+            else:
+                _term_console.print(f"[white]{safe}[/white]")
+        else:
+            try:
+                print(text, flush=True)
+            except Exception:
+                pass
+
+    def format_action_preview(self, action, params):
+        """Formats an action and its parameters into a clean human-readable summary."""
+        act = str(action or "").lower().strip()
+        p = params if isinstance(params, dict) else {}
+        if act == "click":
+            return f"Clic izquierdo en ({p.get('x', 0)}, {p.get('y', 0)})"
+        if act == "double_click":
+            return f"Doble clic en ({p.get('x', 0)}, {p.get('y', 0)})"
+        if act == "right_click":
+            return f"Clic derecho en ({p.get('x', 0)}, {p.get('y', 0)})"
+        if act == "type_text":
+            enter_tag = " + [Enter]" if p.get("press_enter") else ""
+            return f"Escribir texto: \"{p.get('text', '')}\"{enter_tag}"
+        if act == "press_key":
+            return f"Presionar tecla: [{p.get('key', '')}]"
+        if act == "hotkey":
+            keys = p.get("keys", [])
+            combo = " + ".join(str(k) for k in keys) if isinstance(keys, list) else str(keys)
+            return f"Atajo de teclado: [{combo}]"
+        if act == "scroll":
+            return f"Desplazar rueda (scroll): {p.get('clicks', 0)} unidades"
+        if act == "wait":
+            return f"Pausa de espera: {p.get('seconds', 1.5)}s"
+        if act == "done":
+            return f"Finalizar tarea — {p.get('summary', 'Meta cumplida')}"
+        return f"{act.upper()} {p}"
+
+    def _print_start_banner(self, task_description, target_app, screen_w, screen_h):
+        """Renders the double-line cyan header banner & active rules inspired by windows_ai_controller."""
+        provider = self.config.get("ai_provider", "DeepSeek")
+        model = (
+            self.config.get("deepseek_model", "deepseek-v4-pro")
+            if provider == "DeepSeek"
+            else self.config.get("gemini_model", "gemini-3.5-flash")
+        )
+        self._forward_callback(f"[J.A.R.V.I.S.] Iniciando tarea: {task_description}")
+
+        if _RICH_AVAILABLE and _term_console is not None:
+            banner = (
+                "\n"
+                "╔════════════════════════════════════════════════════════════════════╗\n"
+                "║        J.A.R.V.I.S. — CONTROLADOR DE PROGRAMAS MEDIANTE IA         ║\n"
+                "║     Multimodal (DeepSeek / Gemini) | PyAutoGUI | Kill Switch       ║\n"
+                "╚════════════════════════════════════════════════════════════════════╝"
+            )
+            _term_console.print(f"[bold cyan]{banner}[/bold cyan]")
+            _term_console.print("[bold yellow]⚡ PARÁMETROS Y REGLAS ACTIVAS:[/bold yellow]")
+            _term_console.print(f"  • [bold white]Orden actual:[/bold white] [bright_cyan]'{rich_escape(task_description)}'[/bright_cyan]")
+            if target_app:
+                _term_console.print(f"  • [bold white]Programa autorizado:[/bold white] [bold green]{rich_escape(target_app)}[/bold green]")
+            _term_console.print(
+                f"  • [bold white]Motor Multimodal:[/bold white] [bold green]{rich_escape(provider)}[/bold green] "
+                f"([cyan]{rich_escape(model)}[/cyan]) | [dim]Pantalla {screen_w}x{screen_h}[/dim]"
+            )
+            _term_console.print("  • Verificación visual automática de cada acción antes del siguiente paso")
+            _term_console.print(
+                "  • [bold red]Kill Switch:[/bold red] Presiona la tecla "
+                "[bold white on red] Esc [/bold white on red] en cualquier momento para abortar la tarea actual\n"
+            )
+        else:
+            print(f"\n=== J.A.R.V.I.S. CONTROL DE SISTEMA | Tarea: {task_description} ===\n", flush=True)
+
+    def _print_step_reasoning(self, step, max_steps, thought, verification, action, params, is_risky, risk_desc):
+        """Renders AI reasoning panel, verification status, action badge, and risk warning panel."""
+        preview = self.format_action_preview(action, params)
+        self._forward_callback(f"[Paso {step}/{max_steps}] Pensamiento: {thought} | Acción: {preview}")
+
+        if _RICH_AVAILABLE and _term_console is not None:
+            if step > 1 and verification:
+                v_low = verification.lower()
+                has_warn = any(w in v_low for w in ("error", "fall", "advertencia", "warning", "no se", "problema", "captcha"))
+                if has_warn:
+                    _term_console.print(f"[bold yellow]⚠ Verificación previa: {rich_escape(verification)}[/bold yellow]")
+                else:
+                    _term_console.print(f"[bold green]✔ Verificación exitosa: {rich_escape(verification)}[/bold green]")
+
+            thought_panel = Panel(
+                f"[italic bright_white]{rich_escape(thought)}[/italic bright_white]",
+                title=f"[bold bright_blue]🧠 Razonamiento de la IA (Paso {step}/{max_steps})[/bold bright_blue]",
+                border_style="blue",
+                box=box.ROUNDED,
+                padding=(0, 1)
+            )
+            _term_console.print(thought_panel)
+            _term_console.print(f"[bold magenta]▶ Siguiente acción: {rich_escape(preview)}[/bold magenta]")
+
+            if is_risky:
+                alert_panel = Panel(
+                    f"[bold red]⚠️ ADVERTENCIA DE SEGURIDAD DEL SISTEMA[/bold red]\n\n"
+                    f"J.A.R.V.I.S. ha planificado una acción clasificada como [bold red]RIESGOSA[/bold red]:\n"
+                    f"• [bold white]Acción:[/bold white] {rich_escape(preview)}\n"
+                    f"• [bold white]Motivo de Riesgo:[/bold white] {rich_escape(risk_desc or 'Potencial modificación sensible del sistema')}",
+                    border_style="red",
+                    box=box.ROUNDED,
+                    padding=(0, 1)
+                )
+                _term_console.print(alert_panel)
+        else:
+            print(f"[Paso {step}/{max_steps}] Razonamiento: {thought}\nAcción: {preview}", flush=True)
+
+    def _print_finish_summary(self, final_summary, was_cancelled, had_error, action_history):
+        """Renders completion/abort panel and an execution history table at the end of a sequence."""
+        self._forward_callback(f"[J.A.R.V.I.S.] Fin de secuencia: {final_summary}")
+
+        if not (_RICH_AVAILABLE and _term_console is not None):
+            print(f"\n=== SECUENCIA FINALIZADA: {final_summary} ===\n", flush=True)
+            return
+
+        _term_console.print()
+        if action_history:
+            table = Table(
+                title="Registro de Pasos Ejecutados",
+                border_style="cyan",
+                box=box.ROUNDED,
+                show_lines=False
+            )
+            table.add_column("#", style="bold cyan", width=4, justify="right")
+            table.add_column("Acción", style="bold magenta", min_width=18)
+            table.add_column("Resultado en Sistema", style="white")
+
+            for idx, item in enumerate(action_history, 1):
+                res_txt = str(item.get("result", "OK"))
+                rejected = "Rechazada" in res_txt
+                res_styled = f"[yellow]⚠ {rich_escape(res_txt)}[/yellow]" if rejected else f"[green]✔[/green] {rich_escape(res_txt)}"
+                table.add_row(str(idx), rich_escape(str(item.get("action", "")).upper()), res_styled)
+
+            _term_console.print(table)
+
+        if was_cancelled:
+            _term_console.print(Panel(
+                f"[bold red]🛑 PARADA DE EMERGENCIA ACTIVADA \\[ESC][/bold red]\n"
+                f"[white]{rich_escape(final_summary)}[/white]",
+                border_style="red",
+                box=box.ROUNDED,
+                padding=(0, 1)
+            ))
+        elif had_error:
+            _term_console.print(Panel(
+                f"[bold red]✖ SECUENCIA INTERRUMPIDA POR ERROR[/bold red]\n"
+                f"[white]{rich_escape(final_summary)}[/white]",
+                border_style="red",
+                box=box.ROUNDED,
+                padding=(0, 1)
+            ))
+        else:
+            _term_console.print(Panel(
+                f"[bold green]🎯 ¡TAREA FINALIZADA CON ÉXITO![/bold green]\n"
+                f"[white]{rich_escape(final_summary)}[/white]",
+                border_style="green",
+                box=box.ROUNDED,
+                padding=(0, 1)
+            ))
+        _term_console.print()
 
     def check_esc_key(self):
         """Checks if physical Escape key is currently pressed on Windows."""
@@ -65,7 +260,7 @@ class ComputerAgent:
                 if self.check_esc_key():
                     self.kill_switch_triggered = True
                     self.is_running = False
-                    self.log_terminal("\n🛑 [KILL SWITCH ACTIVADO]: Tecla 'Esc' detectada. Deteniendo control de inmediato.")
+                    self.log_terminal("🛑 KILL SWITCH ACTIVADO: Tecla [Esc] detectada. Deteniendo control de inmediato.", level="error")
                     break
                 time.sleep(0.04)
         
@@ -152,11 +347,12 @@ HISTORIAL DE ACCIONES ANTERIORES:
 ESTADO PREVIO PARA VERIFICACIÓN:
 {prev_action_prompt}
 
-INSTRUCCIONES CLAVE DE VERIFICACIÓN (WARNINGS):
-1. REVISA DETENIDAMENTE la captura de pantalla actual. Verifica si la acción anterior produjo el efecto deseado (por ejemplo, si se abrió la ventana, si la página web cargó, si el cursor está en el campo de texto, o si apareció algún error, captcha o advertencia).
-2. Si la acción anterior falló o no tuvo efecto, describe la advertencia en "verification" y plantea una alternativa correctiva.
-3. Elige la SIGUIENTE ACCIÓN inmediata y precisa para avanzar hacia el objetivo del usuario.
-4. Si la tarea ya se ha completado por completo, elige la acción "done" con un resumen detallado.
+INSTRUCCIONES CLAVE DE VERIFICACIÓN Y REUTILIZACIÓN DE VENTANAS (WARNINGS):
+1. REUTILIZACIÓN DE VENTANAS ABIERTAS: Si la ventana del programa solicitado (por ejemplo Chrome, Blender, etc.) YA aparece abierta en la captura de pantalla actual, interactúa directamente con esa ventana existente (por ejemplo en Chrome usa `["ctrl", "t"]` para abrir una nueva pestaña o `["ctrl", "l"]` para escribir en la barra de direcciones) y NUNCA vuelvas a abrir otra instancia del programa desde el escritorio ni desde la barra de tareas.
+2. REVISA DETENIDAMENTE la captura de pantalla actual. Verifica si la acción anterior produjo el efecto deseado (por ejemplo, si se abrió la ventana, si la página web cargó, si el cursor está en el campo de texto, o si apareció algún error, captcha o advertencia).
+3. Si la acción anterior falló o no tuvo efecto, describe la advertencia en "verification" y plantea una alternativa correctiva.
+4. Elige la SIGUIENTE ACCIÓN inmediata y precisa para avanzar hacia el objetivo del usuario.
+5. Si la tarea ya se ha completado por completo, elige la acción "done" con un resumen detallado.
 
 ACCIONES DISPONIBLES (action):
 - "click": Hace clic izquierdo. Requiere "x" e "y".
@@ -351,15 +547,9 @@ Marca "is_risky": true si la acción implica eliminar archivos (del, rmdir, vaci
         screen_w, screen_h = pyautogui.size()
         screen_w = screen_w or 1366
         screen_h = screen_h or 768
+        provider = self.config.get("ai_provider", "DeepSeek")
 
-        self.log_terminal("\n" + "=" * 80)
-        self.log_terminal("🚀 [J.A.R.V.I.S. AGENTE DE CONTROL DE SISTEMA] INICIANDO SECUENCIA")
-        self.log_terminal(f"📋 TAREA: {task_description}")
-        if target_app:
-            self.log_terminal(f"🎯 PROGRAMA OBJETIVO: {target_app}")
-        self.log_terminal(f"🖥️ RESOLUCIÓN DE PANTALLA: {screen_w}x{screen_h}")
-        self.log_terminal("🛑 PARADA DE EMERGENCIA: Presione la tecla 'Esc' en cualquier momento para cancelar.")
-        self.log_terminal("=" * 80 + "\n")
+        self._print_start_banner(task_description, target_app, screen_w, screen_h)
 
         # 0. Initial brief pause to let chat message render and settle
         time.sleep(1.0)
@@ -367,20 +557,25 @@ Marca "is_risky": true si la acción implica eliminar archivos (del, rmdir, vaci
         action_history = []
         prev_action_info = None
         final_summary = ""
+        had_error = False
 
         try:
             for step in range(1, max_steps + 1):
                 # 1. Check Kill Switch
                 if not self.is_running or self.kill_switch_triggered or self.check_esc_key():
                     self.kill_switch_triggered = True
-                    self.log_terminal("\n🛑 [PARADA DE EMERGENCIA ACTIVADA (ESC)]: Cancelando tarea inmediatamente.")
                     final_summary = "Operación detenida por el usuario mediante la parada de emergencia (tecla Esc)."
                     break
 
+                if _RICH_AVAILABLE and _term_console is not None:
+                    _term_console.print(Rule(f"[bold cyan]Paso {step}/{max_steps}[/bold cyan]", style="dim cyan"))
+
                 # 2. Capture Screen
+                self.log_terminal(f"[Paso {step}] Capturando pantalla...", level="status")
                 current_img = self.capture_screen()
 
                 # 3. Decision via Multimodal Model
+                self.log_terminal(f"[Paso {step}] Analizando pantalla y consultando IA ({provider})...", level="status")
                 decision = self.ask_multimodal_decision(
                     task_description=task_description,
                     current_screen_img=current_img,
@@ -398,14 +593,7 @@ Marca "is_risky": true si la acción implica eliminar archivos (del, rmdir, vaci
                 risk_desc = decision.get("risk_description", "")
 
                 # 4. Print Step Reasoning and Verification to Terminal
-                self.log_terminal("\n" + "-" * 80)
-                self.log_terminal(f"🤖 [J.A.R.V.I.S. OS AGENT] PASO {step}/{max_steps}")
-                self.log_terminal("-" * 80)
-                self.log_terminal(f"🧠 RAZONAMIENTO:\n   {thought}")
-                self.log_terminal(f"🔍 VERIFICACIÓN & WARNINGS:\n   {verification}")
-                self.log_terminal(f"⚡ ACCIÓN SELECCIONADA: {action.upper()} -> {params}")
-                self.log_terminal(f"⚠️ ACCIÓN RIESGOSA: {'SÍ: ' + risk_desc if is_risky else 'No'}")
-                self.log_terminal("-" * 80)
+                self._print_step_reasoning(step, max_steps, thought, verification, action, params, is_risky, risk_desc)
 
                 if on_step_callback:
                     try:
@@ -415,12 +603,12 @@ Marca "is_risky": true si la acción implica eliminar archivos (del, rmdir, vaci
 
                 # 5. Risk Confirmation Check
                 if is_risky:
-                    self.log_terminal(f"\n⚠️ [ADVERTENCIA DE SEGURIDAD]: Se detectó una acción de riesgo: {risk_desc}")
+                    self.log_terminal("Solicitando autorización explícita al usuario para acción de riesgo...", level="warning")
                     authorized = True
                     if self.confirmation_callback:
                         authorized = self.confirmation_callback(risk_desc or f"Acción '{action}' potencialmente destructiva.")
                     if not authorized:
-                        self.log_terminal("❌ [ACCIÓN RECHAZADA]: El usuario declinó autorizar la acción de riesgo. Omitiendo.")
+                        self.log_terminal("Acción detenida por seguridad: el usuario rechazó la acción riesgosa.", level="warning")
                         action_history.append({
                             "action": action,
                             "params": params,
@@ -431,18 +619,17 @@ Marca "is_risky": true si la acción implica eliminar archivos (del, rmdir, vaci
                 # 6. Check Kill Switch right before GUI execution
                 if not self.is_running or self.kill_switch_triggered or self.check_esc_key():
                     self.kill_switch_triggered = True
-                    self.log_terminal("\n🛑 [PARADA DE EMERGENCIA]: Cancelado antes de ejecutar acción.")
                     final_summary = "Operación detenida por el usuario mediante la tecla Esc."
                     break
 
                 # 7. Execute Action
                 if action == "done":
                     final_summary = params.get("summary") or thought or "Tarea completada con éxito."
-                    self.log_terminal(f"\n✅ [OBJETIVO ALCANZADO]: {final_summary}")
                     break
                 else:
+                    self.log_terminal(f"[Paso {step}] Ejecutando acción en Windows...", level="status")
                     exec_result = self.execute_pyautogui_action(action, params, screen_w, screen_h)
-                    self.log_terminal(f"⚙️ [EJECUCIÓN]: {exec_result}")
+                    self.log_terminal(f"Ejecutado: {exec_result}", level="success")
                     
                     prev_action_info = {
                         "action": action,
@@ -452,23 +639,22 @@ Marca "is_risky": true si la acción implica eliminar archivos (del, rmdir, vaci
                     action_history.append(prev_action_info)
 
                     # Pause for UI to update before next capture
+                    self.log_terminal("Esperando 1.2s para asentamiento visual de la interfaz...", level="status")
                     time.sleep(1.2)
 
             else:
                 final_summary = f"Se alcanzó el límite máximo de {max_steps} pasos establecidos para la tarea."
-                self.log_terminal(f"\n⏳ [LÍMITE ALCANZADO]: {final_summary}")
+                self.log_terminal(final_summary, level="warning")
 
         except Exception as ex:
+            had_error = True
             error_msg = f"Excepción durante el control del sistema: {str(ex)}"
             logger.error(error_msg)
-            self.log_terminal(f"\n❌ [ERROR CRÍTICO]: {error_msg}")
+            self.log_terminal(error_msg, level="error")
             final_summary = f"La tarea se interrumpió debido a un error: {str(ex)}"
         finally:
             self.is_running = False
-            self.log_terminal("\n" + "=" * 80)
-            status_tag = "CANCELADA POR ESC" if self.kill_switch_triggered else "FINALIZADA"
-            self.log_terminal(f"🏁 [J.A.R.V.I.S.] SECUENCIA DE CONTROL {status_tag}")
-            self.log_terminal("=" * 80 + "\n")
+            self._print_finish_summary(final_summary, self.kill_switch_triggered, had_error, action_history)
             
             if on_finish_callback:
                 try:

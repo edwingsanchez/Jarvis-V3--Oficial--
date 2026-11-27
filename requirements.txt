@@ -10,3 +10,4 @@ edge-tts
 pyautogui
 pyperclip
 mss
+rich
